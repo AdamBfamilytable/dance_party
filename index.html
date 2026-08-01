@@ -606,6 +606,57 @@
   }
   let hatchling = HATCH_TABLE[0];
 
+  // ---- Baby stage foreshadows the roll: pink dragonling, yellow chick, or golden hatchling ----
+  const CHICK_BABY_FRAMES = [
+    [
+      '....CC....',
+      '...FFFF...',
+      '..FEFFF...',
+      '.DDFFFF...',
+      '...FFFF...',
+      '..FFFFFF..',
+      '.FFFFFFFF.',
+      'WWWWWWWWWW',
+      '.WWGWWWWW.',
+      '.WWWWWGWW.',
+      '..WWWWWW..',
+      '...WWWW...',
+    ],
+    [
+      '....CC....',
+      '...FFFF...',
+      '..FEFFF...',
+      '.DDFFFF.F.',
+      '...FFFFFF.',
+      '..FFFFFF..',
+      '.FFFFFFFF.',
+      'WWWWWWWWWW',
+      '.WWGWWWWW.',
+      '.WWWWWGWW.',
+      '..WWWWWW..',
+      '...WWWW...',
+    ],
+    [
+      '....CC....',
+      '...FFFF...',
+      '..FEFFF...',
+      '.DDFFFF...',
+      '.F.FFFF...',
+      '..FFFFFF..',
+      '.FFFFFFFF.',
+      'WWWWWWWWWW',
+      '.WWGWWWWW.',
+      '.WWWWWGWW.',
+      '..WWWWWW..',
+      '...WWWW...',
+    ],
+  ];
+  const babyFrames = {
+    dragon: eggStates.baby,
+    chicken: buildFrames(CHICK_BABY_FRAMES, Object.assign({}, CHICKEN_PALETTE, { F: '#f7e07a' })),
+    golden: buildFrames(BABY_FRAMES, Object.assign({}, PALETTE, { P: '#f2c14e' })),
+  };
+
   // ---- Cat, 14 x 8, facing left — tail swishes, paws lift ----
   // ---- Triceratops, 20 x 11, facing left — pink-edged frill, cream horns ----
   const TRIKE_FRAMES = [
@@ -1155,12 +1206,41 @@
   let danceMs = 0, lastFrameNow = null;
 
   // ---- Audio ----
+  // iOS quirk: Web Audio obeys the ringer/silent switch until an <audio> element
+  // has played — so on the first gesture we play a beep of pure silence through
+  // one, which flips the audio session to "playback" and un-mutes everything.
+  let unlockEl = null, unlockDone = false;
+  function silentWavURL() {
+    const n = 2205;   // 0.05s of 16-bit mono silence at 44.1kHz
+    const buf = new ArrayBuffer(44 + n * 2);
+    const v = new DataView(buf);
+    const tag = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    tag(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); tag(8, 'WAVE');
+    tag(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 44100, true); v.setUint32(28, 88200, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    tag(36, 'data'); v.setUint32(40, n * 2, true);
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  }
+  function unlockAudio() {
+    if (unlockDone) return;
+    if (!unlockEl) {
+      unlockEl = new Audio(silentWavURL());
+      unlockEl.setAttribute('playsinline', '');
+    }
+    const p = unlockEl.play();
+    if (p) p.then(() => { unlockDone = true; }).catch(() => {});   // not a gesture yet — retry next time
+  }
   let audioCtx = null;
   function getAudio() {
+    unlockAudio();
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === 'suspended') audioCtx.resume();
     return audioCtx;
   }
+  // Coming back from another app leaves the context suspended; wake it up
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  });
 
   function fireworkSound() {
     const ac = getAudio();
@@ -1275,6 +1355,7 @@
 
   // ---- Beat ----
   let beatTimer = null, beatOn = false, step = 0;
+  let lastKickAt = -Infinity;   // real-time anchor for the rhythm judge
   const beatBtn = document.getElementById('beatBtn');
   function kick(t) {
     const o = audioCtx.createOscillator();
@@ -1497,7 +1578,10 @@
   const TICK_S = BEAT_MS / 2000;   // one scheduler tick, in seconds
   function scheduleBeat() {
     const t = audioCtx.currentTime + 0.05;
-    if (step % 2 === 0) buzz(18);   // the kick, in your hand
+    if (step % 2 === 0) {
+      lastKickAt = performance.now() + 50;   // where the downbeat actually lands, for the judge
+      buzz(18);   // the kick, in your hand
+    }
     if (mode === 'house') {
       // Hardcore house: distorted four-on-the-floor, 16th hats, offbeat opens, relentless octave bass
       if (step % 2 === 0) hardKick(t); else openHat(t);
@@ -1724,8 +1808,11 @@
   // ---- Rhythm game: taps are judged against the beat grid while the beat runs ----
   let combo = 0, bestCombo = 0, comboFlashAt = -Infinity, comboJudge = '';
   function scoreTap(now) {
-    if (!beatOn || reduced) return;
-    const phase = (danceMs % BEAT_MS) / BEAT_MS;   // 0 = right on the kick
+    if (!beatOn || reduced || !isFinite(lastKickAt)) return;
+    // Judge against the real-time kick grid, not the dance clock — house runs the
+    // dance clock double-time and trap half-time, but every remix schedules its
+    // downbeats every BEAT_MS of wall time.
+    const phase = ((((now - lastKickAt) % BEAT_MS) + BEAT_MS) % BEAT_MS) / BEAT_MS;   // 0 = right on the kick
     const onBeat = phase < 0.20 || phase > 0.80;
     if (onBeat) {
       combo++;
@@ -1771,7 +1858,8 @@
       if (eggStage === 'egg' && EGG_INDEX >= 0) {
         eggStage = 'baby';
         stageUntil = now + BABY_MS;
-        hatchSound();
+        hatchling = pickHatch(URLP.get('hatch'));
+        if (hatchling.kind === 'chicken') cluckSound(); else hatchSound();
       }
       drawScene(now);
     }
@@ -1779,6 +1867,7 @@
 
   canvas.addEventListener('pointerdown', e => {
     armTilt();          // iOS wants a gesture before it hands over the gyroscope
+    unlockAudio();      // and a gesture before sound escapes the silent switch
     startPendingBeat(); // URL asked for music: first touch is our autoplay permission
     // Grab check: did the finger land on somebody?
     let hit = -1, hitD = Infinity;
@@ -1854,16 +1943,17 @@
     if (!eggD) { /* no egg in this lineup */ } else if (eggStage === 'cracking' && now >= hatchDoneAt) {
       eggStage = 'baby';
       stageUntil = now + BABY_MS;
+      // Roll the hatch table NOW so the baby matches what's going to fly:
+      // pink dragonling, yellow chick, or the rare golden hatchling
+      hatchling = pickHatch(URLP.get('hatch'));
       burst(W * eggD.xFrac, floorY - eggD.h * scale * 0.5, SHELL_COLORS, 30);
-      hatchSound();
+      if (hatchling.kind === 'chicken') cluckSound(); else hatchSound();
     } else if (eggStage === 'baby' && now >= stageUntil) {
       if (reduced) {
         eggStage = 'egg';
       } else {
         eggStage = 'growing';
         growStart = now;
-        // Roll the hatch table: pink dragon, disco chicken, or the rare golden dragon
-        hatchling = pickHatch(URLP.get('hatch'));
         growSound();
       }
     } else if (eggStage === 'growing' && now >= growStart + GROW_MS) {
@@ -2088,7 +2178,7 @@
           sizeF = 0.4 + 0.6 * gp + Math.sin(gp * Math.PI * 6) * 0.04 * (1 - gp);
           shadowW = 4.5 + 4 * gp;
         } else {
-          frames = eggStates[eggStage];
+          frames = eggStage === 'baby' ? babyFrames[hatchling.kind] : eggStates[eggStage];
           // The egg wobbles harder than it bounces, and shivers while cracking
           if (!reduced && eggStage !== 'baby') tilt = Math.sin(beatT * Math.PI * 2) * 0.14;
           if (!reduced && eggStage === 'cracking') tilt += Math.sin(now / 28) * 0.05;
