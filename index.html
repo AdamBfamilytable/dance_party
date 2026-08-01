@@ -1,0 +1,2454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#8ed1ea">
+<meta name="description" content="A tiny pixel-art dance party: Claude, a t-rex, a train, a truck, a cat, a mysterious egg, and a triceratops. Tap for fireworks.">
+<meta property="og:title" content="claude --dance">
+<meta property="og:description" content="Pixel dance party. Tap for fireworks. Watch the egg.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🕺</text></svg>">
+<title>claude --dance</title>
+<style>
+  :root {
+    --sky: #8ed1ea;
+    --ink: #2b4a58;
+    --dim: #3b6478;
+    --accent: #d97757;
+  }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--sky);
+    overflow: hidden;
+    overscroll-behavior: none;
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+    color: var(--dim);
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;   /* mobile browsers: track the real visible height as the address bar hides/shows */
+    image-rendering: pixelated;
+    cursor: pointer;
+    touch-action: none;   /* taps go to the party, not to scrolling or pinch-zoom */
+  }
+  .hud {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: clamp(16px, 3vmin, 32px);
+    padding-top: max(clamp(16px, 3vmin, 32px), env(safe-area-inset-top));
+    padding-bottom: max(clamp(16px, 3vmin, 32px), env(safe-area-inset-bottom));
+    padding-left: max(clamp(16px, 3vmin, 32px), env(safe-area-inset-left));
+    padding-right: max(clamp(16px, 3vmin, 32px), env(safe-area-inset-right));
+  }
+  .prompt {
+    font-size: clamp(13px, 1.8vmin, 16px);
+    letter-spacing: 0.08em;
+  }
+  .prompt .dollar { color: var(--accent); }
+  .prompt .cmd { color: var(--ink); font-weight: 600; }
+  .cursor {
+    display: inline-block;
+    width: 0.6em; height: 1.05em;
+    background: var(--ink);
+    vertical-align: text-bottom;
+    margin-left: 2px;
+    animation: blink 1.1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    align-items: center;
+    pointer-events: auto;
+  }
+  button {
+    font: inherit;
+    font-size: clamp(11px, 1.6vmin, 14px);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink);
+    background: rgba(255, 255, 255, 0.55);
+    border: 1px solid var(--ink);
+    padding: 8px 16px;
+    min-height: 40px;   /* comfortable touch target */
+    cursor: pointer;
+    touch-action: manipulation;   /* kill the double-tap zoom delay on remix mashing */
+    transition: background 0.15s, color 0.15s;
+  }
+  @media (max-width: 640px) {
+    button { padding: 7px 10px; letter-spacing: 0.08em; font-size: 11px; }
+    .controls { gap: 6px 8px; }
+    .prompt { font-size: 11px; word-break: break-all; }
+  }
+  button:hover { background: rgba(255, 255, 255, 0.85); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .hint {
+    font-size: clamp(10px, 1.5vmin, 13px);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    opacity: 0.85;
+  }
+  .verb-tap { display: none; }
+  @media (hover: none) and (pointer: coarse) {
+    .verb-tap { display: inline; }
+    .verb-click { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cursor { animation: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="hud">
+  <div class="prompt"><span class="dollar">$</span> <span class="cmd">claude --dance --with trex,train,truck,cat,egg --disco</span><span class="cursor"></span></div>
+  <div class="controls">
+    <button id="beatBtn" aria-pressed="false">&#9654; beat</button>
+    <button id="houseBtn" aria-pressed="false">remix: house</button>
+    <button id="trapBtn" aria-pressed="false">remix: trap</button>
+    <button id="tranceBtn" aria-pressed="false">remix: trance</button>
+    <button id="countryBtn" aria-pressed="false">remix: country</button>
+    <button id="popBtn" aria-pressed="false">remix: 90s pop</button>
+    <button id="shareBtn">share</button>
+    <button id="snapBtn">postcard</button>
+    <span class="hint"><span class="verb-click">click</span><span class="verb-tap">tap</span>: fireworks + mexican wave (watch the egg)</span>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const CONFETTI_COLORS = ['#e8907a', '#f2c14e', '#d97757', '#7fb069', '#d95763', '#8ed1ea', '#fdf6ec', '#5b8dd9', '#e08fb6'];
+  const SHELL_COLORS = ['#fdf6ec', '#f3ead9', '#7fb069', '#e08fb6'];
+  const BPM = 118;
+  const BEAT_MS = 60000 / BPM;
+  const FLIP_MS = 700;
+  const FLIP_STAGGER = 260;   // wide gap so the flips roll down the line like a stadium wave
+  const SWAP_MS = 12000;      // front and back dance rows trade places this often
+  const BABY_MS = 6000;       // hatchling stage
+  const GROW_MS = 1400;       // growth spurt
+  const DRAGON_MS = 11000;    // flight time before the egg reforms
+  const DISCO_COLORS = ['#f6a5c0', '#a5d8f6', '#f6e3a5', '#b8f0a5', '#d8b5f0', '#f6c3a5'];
+
+  const PALETTE = {
+    B: '#e8907a',  // claude coral
+    E: '#241b16',  // eyes
+    G: '#7fb069',  // t-rex green / egg spots
+    L: '#c5deb0',  // t-rex belly
+    T: '#f3ead9',  // t-rex teeth
+    R: '#d95763',  // train red
+    K: '#3a3540',  // wheels / stack / cracks
+    Y: '#f2c14e',  // hubs / trim
+    W: '#fdf6ec',  // windows / cargo / eggshell
+    U: '#5b8dd9',  // truck blue
+    P: '#e08fb6',  // baby dino / dragon pink
+    Q: '#f2c9dc',  // dragon wing membrane
+    O: '#e8a35c',  // cat orange
+    H: '#8a5a33',  // cowboy hat / boots brown
+    V: '#a08fd9',  // triceratops lavender
+  };
+
+  // ---- Claude, 16 x 12 — four legs exactly ----
+  const CLAUDE_FRAMES = [
+    [
+      '...BB......BB...',
+      '...BB......BB...',
+      '..BBBBBBBBBBBB..',
+      '..BBEEBBBBEEBB..',
+      '..BBEEBBBBEEBB..',
+      'BBBBBBBBBBBBBBBB',
+      'B.BBBBBBBBBBBB.B',
+      '..BBBBBBBBBBBB..',
+      '...B..B..B..B...',
+      '...B..B..B..B...',
+      '...B..B..B..B...',
+      '................',
+    ],
+    [
+      '...BB......BB...',
+      '...BB......BB...',
+      'B.BBBBBBBBBBBB..',
+      'B.BBEEBBBBEEBB..',
+      'BBBBEEBBBBEEBB..',
+      '..BBBBBBBBBBBBBB',
+      '..BBBBBBBBBBBB.B',
+      '..BBBBBBBBBBBB..',
+      '..B...B..B...B..',
+      '..B...B..B...B..',
+      '.B....B..B....B.',
+      '................',
+    ],
+    [
+      '...BB......BB...',
+      '...BB......BB...',
+      '..BBBBBBBBBBBB.B',
+      '..BBEEBBBBEEBB.B',
+      '..BBEEBBBBEEBBBB',
+      'BBBBBBBBBBBBBB..',
+      'B.BBBBBBBBBBBB..',
+      '..BBBBBBBBBBBB..',
+      '....B..B..B..B..',
+      '....B..B..B..B..',
+      '....B..B..B...B.',
+      '................',
+    ],
+  ];
+
+  // ---- T-rex, 18 x 16, facing left ----
+  const TREX_FRAMES = [
+    [
+      '..GGGGGG..........',
+      '.GGGGGGGG.........',
+      '.GGEGGGGG.........',
+      '.GGGGGGGG.........',
+      '.GTTGGGGG.........',
+      '.GGGGGGGGG......G.',
+      '..GGGGGGGGG....GG.',
+      '...GGGGGGGGG..GGG.',
+      '...GLLGGGGGGGGGG..',
+      '...GLLGGGGGGGGG...',
+      '..GGLLGGGGGGGG....',
+      '..GGGGGGGGGGG.....',
+      '.....GGG.GGG......',
+      '.....GG...GG......',
+      '.....GG...GG......',
+      '....GGG...GGG.....',
+    ],
+    [
+      '..GGGGGG.......G..',
+      '.GGGGGGGG.....GG..',
+      '.GGEGGGGG....GG...',
+      '.GTTGGGGG.........',
+      '.GEEGGGGG.........',
+      '.GTTGGGGGG........',
+      '.GGGGGGGGGG.......',
+      '...GGGGGGGGG..GG..',
+      '...GLLGGGGGGGGGG..',
+      '...GLLGGGGGGGGG...',
+      '..GGLLGGGGGGGG....',
+      '..GGGGGGGGGGG.....',
+      '....GGGG.GGG......',
+      '...GG.....GG......',
+      '..GG......GG......',
+      '..........GGG.....',
+    ],
+    [
+      '..GGGGGG..........',
+      '.GGGGGGGG.........',
+      '.GGEGGGGG.........',
+      '.GGGGGGGG.........',
+      '.GTTGGGGG.........',
+      '.GGGGGGGGG........',
+      '..GGGGGGGGG....G..',
+      '...GGGGGGGGG..GG..',
+      '...GLLGGGGGGGGGG..',
+      '...GLLGGGGGGGGG...',
+      '..GGLLGGGGGGGG....',
+      '..GGGGGGGGGGG.....',
+      '.....GGG.GGGG.....',
+      '.....GG.....GG....',
+      '.....GG......GG...',
+      '....GGG...........',
+    ],
+  ];
+
+  // ---- Train, 25 x 13, facing left; wheel hubs roll between frames ----
+  const TRAIN_BODY = [
+    '..KKK..............RRRRR.',
+    '..KKK..............RRRRR.',
+    '..KKK..............RWWWR.',
+    '.KKKKK.............RWWWR.',
+    '..RRRRRRRRRRRRRRR..RRRRR.',
+    '.RRRRRRRRRRRRRRRRRRRRRRR.',
+    '.REERRRRRRRRRRRRRRRRRRRR.',
+    '.REERRRRRRRRRRRRRRRRRRRR.',
+    '.RRRRRRRRRRRRRRRRRRRRRRR.',
+    '..RRRRRRRRRRRRRRRRRRRRRR.',
+  ];
+  const TRAIN_WHEELS = [
+    [
+      'K..KKKK....KKKK....KKKK..',
+      '.K.KYKK....KYKK....KYKK..',
+      '..KKKKK....KKKK....KKKK..',
+    ],
+    [
+      'K..KKKK....KKKK....KKKK..',
+      '.K.KKYK....KKYK....KKYK..',
+      '..KKKKK....KKKK....KKKK..',
+    ],
+    [
+      'K..KKKK....KKKK....KKKK..',
+      '.K.KKKY....KKKY....KKKY..',
+      '..KKKKK....KKKK....KKKK..',
+    ],
+  ];
+  const TRAIN_FRAMES = TRAIN_WHEELS.map(w => TRAIN_BODY.concat(w));
+
+  // ---- Truck, 24 x 12, facing left; cab with a face, coral stripe on the box ----
+  const TRUCK_BODY = [
+    '........WWWWWWWWWWWWWWW.',
+    '........WWWWWWWWWWWWWWW.',
+    '........BBBBBBBBBBBBBBB.',
+    '.UUUUUU.WWWWWWWWWWWWWWW.',
+    '.UWWWUU.WWWWWWWWWWWWWWW.',
+    '.UWWWUU.WWWWWWWWWWWWWWW.',
+    '.UEEUUUUWWWWWWWWWWWWWWW.',
+    'UUEEUUUUWWWWWWWWWWWWWWW.',
+    'UUUUUUUUUUUUUUUUUUUUUUU.',
+  ];
+  const TRUCK_WHEELS = [
+    [
+      '..KKKK...KKKK....KKKK...',
+      '..KYKK...KYKK....KYKK...',
+      '..KKKK...KKKK....KKKK...',
+    ],
+    [
+      '..KKKK...KKKK....KKKK...',
+      '..KKYK...KKYK....KKYK...',
+      '..KKKK...KKKK....KKKK...',
+    ],
+    [
+      '..KKKK...KKKK....KKKK...',
+      '..KKKY...KKKY....KKKY...',
+      '..KKKK...KKKK....KKKK...',
+    ],
+  ];
+  const TRUCK_FRAMES = TRUCK_WHEELS.map(w => TRUCK_BODY.concat(w));
+
+  // ---- Dino egg, 10 x 12 — wobbles, cracks, hatches a pink baby ----
+  const EGG_FRAMES = [
+    [
+      '...WWWW...',
+      '..WWWWWW..',
+      '.WWWWWWWW.',
+      '.WWGWWWWW.',
+      'WWWWWWWWWW',
+      'WWWWWGWWWW',
+      'WWGWWWWWWW',
+      'WWWWWWWWWW',
+      '.WWWWWGWW.',
+      '.WWWWWWWW.',
+      '..WWWWWW..',
+      '...WWWW...',
+    ],
+    [
+      '..WWWW....',
+      '.WWWWWW...',
+      '.WWWWWWWW.',
+      '.WWGWWWWW.',
+      'WWWWWWWWWW',
+      'WWWWWGWWWW',
+      'WWGWWWWWWW',
+      'WWWWWWWWWW',
+      '.WWWWWGWW.',
+      '.WWWWWWWW.',
+      '..WWWWWW..',
+      '...WWWW...',
+    ],
+    [
+      '....WWWW..',
+      '...WWWWWW.',
+      '.WWWWWWWW.',
+      '.WWGWWWWW.',
+      'WWWWWWWWWW',
+      'WWWWWGWWWW',
+      'WWGWWWWWWW',
+      'WWWWWWWWWW',
+      '.WWWWWGWW.',
+      '.WWWWWWWW.',
+      '..WWWWWW..',
+      '...WWWW...',
+    ],
+  ];
+  const CRACK_FRAME = [
+    '...WWWW...',
+    '..WWWWWW..',
+    '.WWWWWWWW.',
+    '.WWGKWWWW.',
+    'WWWKWWWWWW',
+    'WWKKWKKWWW',
+    'WWWWKWWKWW',
+    'WWWWWWWWWW',
+    '.WWWWWGWW.',
+    '.WWWWWWWW.',
+    '..WWWWWW..',
+    '...WWWW...',
+  ];
+  const CRACK_FRAMES = [CRACK_FRAME, CRACK_FRAME, CRACK_FRAME];
+  const BABY_FRAMES = [
+    [
+      '....PPPP..',
+      '...PPPPPP.',
+      '...PEPPPP.',
+      '...PPPPP..',
+      '...PPPP...',
+      '..PPPPPP..',
+      '.PPPPPPPP.',
+      'WWWWWWWWWW',
+      '.WWGWWWWW.',
+      '.WWWWWGWW.',
+      '..WWWWWW..',
+      '...WWWW...',
+    ],
+    [
+      '....PPPP..',
+      '...PPPPPP.',
+      '...PEPPPP.',
+      '.P.PPPPP..',
+      '.PPPPPP...',
+      '..PPPPPP..',
+      '.PPPPPPPP.',
+      'WWWWWWWWWW',
+      '.WWGWWWWW.',
+      '.WWWWWGWW.',
+      '..WWWWWW..',
+      '...WWWW...',
+    ],
+    [
+      '....PPPP..',
+      '...PPPPPP.',
+      '...PEPPPP.',
+      '...PPPPP.P',
+      '...PPPPPPP',
+      '..PPPPPP..',
+      '.PPPPPPPP.',
+      'WWWWWWWWWW',
+      '.WWGWWWWW.',
+      '.WWWWWGWW.',
+      '..WWWWWW..',
+      '...WWWW...',
+    ],
+  ];
+
+  const DANCE_CYCLE = [0, 1, 0, 2];
+
+  function buildFrames(rows2d, palette) {
+    palette = palette || PALETTE;
+    return rows2d.map(rows => {
+      const c = document.createElement('canvas');
+      c.width = Math.max(...rows.map(r => r.length));
+      c.height = rows.length;
+      const fx = c.getContext('2d');
+      rows.forEach((row, y) => {
+        for (let x = 0; x < row.length; x++) {
+          const col = palette[row[x]];
+          if (!col) continue;
+          fx.fillStyle = col;
+          fx.fillRect(x, y, 1, 1);
+        }
+      });
+      return c;
+    });
+  }
+
+  const eggStates = {
+    egg: buildFrames(EGG_FRAMES),
+    cracking: buildFrames(CRACK_FRAMES),
+    baby: buildFrames(BABY_FRAMES),
+  };
+  // ---- Dragon, 24 x 16, facing left — what the hatchling grows into. Wing frames: up / mid / down ----
+  const DRAGON_ROWS = [
+    [
+      '...........QQ.....QQ....',
+      '..........QQQQ...QQQQ...',
+      '..........QQQQQ.QQQQQ...',
+      '...........QQQQQQQQQ....',
+      '...........PQQQQQQQP....',
+      '..WPPP......PQQQQQP.....',
+      '..PPPPP.....PPPPPP......',
+      '..PEPPPP...PPPPPPPP...P.',
+      '..PPPPPPPPPPPPPPPPPPPPP.',
+      '...PPPPPPPPPPPPPPPPPPP..',
+      '....PPPPPPPPPPPPPPPP....',
+      '.....PPPPPPPPPPPPP......',
+      '......PP...PP..PP.......',
+      '......P....P...P........',
+      '........................',
+      '........................',
+    ],
+    [
+      '........................',
+      '........................',
+      '........QQQQ..QQQQ......',
+      '......QQQQQQQQQQQQQQ....',
+      '.....QQQQQQQQQQQQQQQQ...',
+      '..WPPP..QQQQQQQQQQ......',
+      '..PPPPP..QQQQQQQQ.......',
+      '..PEPPPP...PPPPPPPP...P.',
+      '..PPPPPPPPPPPPPPPPPPPPP.',
+      '...PPPPPPPPPPPPPPPPPPP..',
+      '....PPPPPPPPPPPPPPPP....',
+      '.....PPPPPPPPPPPPP......',
+      '......PP...PP..PP.......',
+      '......P....P...P........',
+      '........................',
+      '........................',
+    ],
+    [
+      '........................',
+      '........................',
+      '........................',
+      '........................',
+      '........................',
+      '..WPPP..................',
+      '..PPPPP.................',
+      '..PEPPPP...PPPPPPPP...P.',
+      '..PPPPPPPPPPPPPPPPPPPPP.',
+      '..QPPPPPPPPPPPPPPPPPPP..',
+      '..QQQPPPPPPPPPPPPPPP....',
+      '..QQQQQ..QQQQQ.PPP......',
+      '...QQQQ...QQQQ..........',
+      '....QQ.....QQ...........',
+      '........................',
+      '........................',
+    ],
+  ];
+  const dragonFrames = buildFrames(DRAGON_ROWS);
+  const DRAGON_W = 24, DRAGON_H = 16;
+  const FLAP_CYCLE = [0, 1, 2, 1];
+
+  // Golden dragon: same beast, palette-swapped to solid gold (rare hatch)
+  const goldenFrames = buildFrames(DRAGON_ROWS, Object.assign({}, PALETTE, {
+    P: '#f2c14e', Q: '#f9e2a0', W: '#fdf6ec',
+  }));
+
+  // ---- Disco chicken, 18 x 14, facing left — an alternate hatch outcome.
+  // C comb, W body, D beak/legs, E eye, S shades. Wing frames: up / mid / down ----
+  const CHICKEN_PALETTE = Object.assign({}, PALETTE, {
+    C: '#e0483a', D: '#f2a33c', S: '#241b16', W: '#fdf6ec',
+  });
+  const CHICKEN_ROWS = [
+    [
+      '...CC.........WW..',
+      '..CCC........WWWW.',
+      '..WWWW.......WWWW.',
+      '..SSWW......WWWW..',
+      'DDWWWW.....WWWW...',
+      '..WWWWWWWWWWWW....',
+      '..WWWWWWWWWWWWW...',
+      '...WWWWWWWWWWWW...',
+      '...WWWWWWWWWWW....',
+      '....WWWWWWWWW.....',
+      '.....DD...DD......',
+      '.....DD...DD......',
+      '....DDD...DDD.....',
+      '..................',
+    ],
+    [
+      '...CC.............',
+      '..CCC.............',
+      '..WWWW............',
+      '..SSWW............',
+      'DDWWWW............',
+      '..WWWWWWWWWWWW....',
+      '..WWWWWWWWWWWWWW..',
+      '...WWWWWWWWWWWWW..',
+      '...WWWWWWWWWWW....',
+      '....WWWWWWWWW.....',
+      '.....DD...DD......',
+      '.....DD...DD......',
+      '....DDD...DDD.....',
+      '..................',
+    ],
+    [
+      '...CC.............',
+      '..CCC.............',
+      '..WWWW............',
+      '..SSWW............',
+      'DDWWWW............',
+      '..WWWWWWWWWWWW....',
+      '..WWWWWWWWWWWWW...',
+      '...WWWWWWWWWWWW...',
+      '...WWWWWWWWWWW....',
+      '..WWWWWWWWWWW.....',
+      '..WWWDD...DD......',
+      '...W.DD...DD......',
+      '....DDD...DDD.....',
+      '..................',
+    ],
+  ];
+  const chickenFrames = buildFrames(CHICKEN_ROWS, CHICKEN_PALETTE);
+
+  // The hatch table: what actually comes out of that egg is a dice roll.
+  // URL can force an outcome (?hatch=golden) for bragging-rights links.
+  const HATCH_TABLE = [
+    { kind: 'dragon',  frames: dragonFrames,  w: DRAGON_W, h: DRAGON_H, weight: 55 },
+    { kind: 'chicken', frames: chickenFrames, w: 18,       h: 14,       weight: 30 },
+    { kind: 'golden',  frames: goldenFrames,  w: DRAGON_W, h: DRAGON_H, weight: 15 },
+  ];
+  function pickHatch(force) {
+    if (force) {
+      const f = HATCH_TABLE.find(h => h.kind === force);
+      if (f) return f;
+    }
+    const total = HATCH_TABLE.reduce((s, h) => s + h.weight, 0);
+    let r = Math.random() * total;
+    for (const h of HATCH_TABLE) { r -= h.weight; if (r <= 0) return h; }
+    return HATCH_TABLE[0];
+  }
+  let hatchling = HATCH_TABLE[0];
+
+  // ---- Cat, 14 x 8, facing left — tail swishes, paws lift ----
+  // ---- Triceratops, 20 x 11, facing left — pink-edged frill, cream horns ----
+  const TRIKE_FRAMES = [
+    [
+      '..W...W.............',
+      '..W...W..PPP........',
+      '.WVVVVVVPVVVP.......',
+      '.VVEVVVVPVVVP.......',
+      'WVVVVVVVPVVVP.......',
+      '.VVVVVVVVPPP........',
+      '..VVVVVVVVVVVVVVV...',
+      '..VVVVVVVVVVVVVVVV..',
+      '...VVVVVVVVVVVVVV...',
+      '....VV...VV...VV....',
+      '....VV...VV...VV....',
+    ],
+    [
+      '..W...W.............',
+      '..W...W..PPP........',
+      '.WVVVVVVPVVVP.......',
+      '.VVEVVVVPVVVP.......',
+      'WVVVVVVVPVVVP.......',
+      '.VVVVVVVVPPP........',
+      '..VVVVVVVVVVVVVVVV..',
+      '..VVVVVVVVVVVVVVVV..',
+      '...VVVVVVVVVVVVVV...',
+      '...VV....VV....VV...',
+      '...VV....VV...VV....',
+    ],
+    [
+      '..W...W.............',
+      '..W...W..PPP........',
+      '.WVVVVVVPVVVP.......',
+      '.VVEVVVVPVVVP.......',
+      'WVVVVVVVPVVVP.......',
+      '.VVVVVVVVPPP........',
+      '..VVVVVVVVVVVVVV....',
+      '..VVVVVVVVVVVVVVVV..',
+      '...VVVVVVVVVVVVVVV.',
+      '.....VV...VV...VV...',
+      '....VV....VV...VV...',
+    ],
+  ];
+
+  // ---- Backpack, 16 x 13 — the party arrives and leaves in it. Closed / open ----
+  const BAG_ROWS = [
+    [
+      '....KK....KK....',
+      '....KK....KK....',
+      '..RRRRRRRRRRRR..',
+      '.RRRRRRRRRRRRRR.',
+      '.RRWWWWWWWWWWRR.',
+      '.RRRRRRRRRRRRRR.',
+      '.RRRRRRRRRRRRRR.',
+      '.RRRRRYYYYRRRRR.',
+      '.RRRRRYYYYRRRRR.',
+      '.RRRRRRRRRRRRRR.',
+      '.RRRRRRRRRRRRRR.',
+      '..RRRRRRRRRRRR..',
+      '................',
+    ],
+    [
+      '....KK....KK....',
+      '.K..KK....KK..K.',
+      '..KKKKKKKKKKKK..',
+      '.RKKKKKKKKKKKKR.',
+      '.RRKKKKKKKKKKRR.',
+      '.RRRRRRRRRRRRRR.',
+      '.RRRRRRRRRRRRRR.',
+      '.RRRRRYYYYRRRRR.',
+      '.RRRRRYYYYRRRRR.',
+      '.RRRRRRRRRRRRRR.',
+      '.RRRRRRRRRRRRRR.',
+      '..RRRRRRRRRRRR..',
+      '................',
+    ],
+  ];
+  const BAG_W = 16, BAG_H = 13;
+
+  const CAT_FRAMES = [
+    [
+      '.O..O.........',
+      '.OOOO......O..',
+      '.OEOEO.....O..',
+      '.OOOOO....O...',
+      '..OOOOOOOOO...',
+      '..OWOOOOOOO...',
+      '..OO..OO..OO..',
+      '..OO..OO..OO..',
+    ],
+    [
+      '.O..O.........',
+      '.OOOO.....O...',
+      '.OEOEO....O...',
+      '.OOOOO.....O..',
+      '..OOOOOOOOO...',
+      '..OWOOOOOOO...',
+      '.OO...OO..OO..',
+      '..O...OO..OO..',
+    ],
+    [
+      '.O..O.........',
+      '.OOOO.........',
+      '.OEOEO.....OO.',
+      '.OOOOO....O...',
+      '..OOOOOOOOO...',
+      '..OWOOOOOOO...',
+      '..OO..OO...OO.',
+      '..OO..OO..OO..',
+    ],
+  ];
+
+  // ---- URL flags: the fake CLI is real now. ?with=trex,cat&remix=trap&beat&hatch=golden&theme=night
+  const URLP = new URLSearchParams(location.search);
+  const ROSTER = [
+    { name: 'claude', frames: buildFrames(CLAUDE_FRAMES), w: 16, h: 12, xFrac: 0.08, phase: 0,    shadowW: 6.5, hatX: 0,    chainPos: [0, -0.5] },
+    { name: 'trex',   frames: buildFrames(TREX_FRAMES),   w: 18, h: 16, xFrac: 0.23, phase: 0.5,  shadowW: 7.5, hatX: -4.5, chainPos: [-4.5, -1] },
+    { name: 'train',  frames: buildFrames(TRAIN_FRAMES),  w: 25, h: 13, xFrac: 0.40, phase: 0.25, shadowW: 11,  hatX: 9,    chainPos: [-10, 1.5], steamCol: 3.5 },
+    { name: 'truck',  frames: buildFrames(TRUCK_FRAMES),  w: 24, h: 12, xFrac: 0.57, phase: 0.75, shadowW: 10.5, hatX: -8.5, chainPos: [-8.5, 2] },
+    { name: 'cat',    frames: buildFrames(CAT_FRAMES),    w: 14, h: 8,  xFrac: 0.70, phase: 0.65, shadowW: 6,   hatX: -4,   chainPos: [-3.5, 0.5], isCat: true },
+    { name: 'egg',    frames: eggStates.egg,              w: 10, h: 12, xFrac: 0.80, phase: 0.4,  shadowW: 4.5, hatX: 0,    chainPos: [0, 0], isEgg: true },
+    { name: 'trike',  frames: buildFrames(TRIKE_FRAMES),  w: 20, h: 11, xFrac: 0.91, phase: 0.15, shadowW: 8.5, hatX: -6.5, chainPos: [-6, 0] },
+  ];
+  const withParam = (URLP.get('with') || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+  let DANCERS = withParam.length ? ROSTER.filter(d => withParam.includes(d.name)) : ROSTER;
+  if (!DANCERS.length) DANCERS = ROSTER;   // nonsense flags get the full crew
+  if (DANCERS.length < ROSTER.length) {
+    // Respace a partial crew evenly across the stage
+    DANCERS.forEach((d, i) => {
+      d.xFrac = DANCERS.length === 1 ? 0.5 : 0.10 + 0.80 * (i / (DANCERS.length - 1));
+    });
+  }
+  const EGG_INDEX = DANCERS.findIndex(d => d.isEgg);
+  const WAVE_MS = (DANCERS.length - 1) * FLIP_STAGGER + FLIP_MS;
+  const duckUntil = new Array(DANCERS.length).fill(0);
+  const bagFrames = buildFrames(BAG_ROWS);
+
+  // Cowboy hat for line-dance mode: crown, gold band, upturned brim
+  const HAT_ROWS = [
+    '...HHHH...',
+    '...HHHH...',
+    '...YYYY...',
+    'H..HHHH..H',
+    'HHHHHHHHHH',
+  ];
+  const hatSprite = buildFrames([HAT_ROWS])[0];
+
+  // Cowboy boots: one small brown boot, toe pointing left
+  const BOOT_ROWS = [
+    '.HH.',
+    '.HH.',
+    'HHHH',
+  ];
+  const bootSprite = buildFrames([BOOT_ROWS])[0];
+
+  // Saguaro cactus for the desert
+  const CACTUS_ROWS = [
+    '...GG...',
+    '...GG...',
+    '.G.GG.G.',
+    '.G.GG.G.',
+    '.GGGGGG.',
+    '...GG...',
+    '...GG...',
+    '...GG...',
+    '...GG...',
+    '...GG...',
+  ];
+  const cactusSprite = buildFrames([CACTUS_ROWS])[0];
+
+  // School tie for the 90s pop era: gold knot, proper tapered tie (not a crucifix)
+  const TIE_ROWS = [
+    '..YYYY..',
+    '..YYYY..',
+    '...RR...',
+    '..RRRR..',
+    '..RRRR..',
+    '.RRRRRR.',
+    '.RRRRRR.',
+    '.RRRRRR.',
+    '..RRRR..',
+    '...RR...',
+  ];
+  const tieSprite = buildFrames([TIE_ROWS])[0];
+
+  // Gold chain for trap mode: draped links with a chunky pendant
+  const CHAIN_ROWS = [
+    'Y......Y',
+    '.Y....Y.',
+    '..Y..Y..',
+    '...YY...',
+    '...YY...',
+  ];
+  const chainSprite = buildFrames([CHAIN_ROWS])[0];
+
+  // Show cycle: backpack drops the crew in, party runs, backpack scoops them up, brief empty stage
+  const DROP_MS = 3000, PARTY_MS = 40000, SCOOP_MS = 3000, IDLE_MS = 2200;
+  const CYCLE_MS = DROP_MS + PARTY_MS + SCOOP_MS + IDLE_MS;
+  let lastShowPhase = '';
+
+  // k: 0 = inside the backpack, 1 = at their spot on the floor
+  function showFor(i, now) {
+    if (reduced) return { vis: true, k: 1 };
+    const ct = now % CYCLE_MS;
+    if (ct < DROP_MS) {
+      const k = Math.max(0, Math.min(1, (ct - 500 - i * 200) / 700));
+      return { vis: k > 0, k };
+    }
+    if (ct < DROP_MS + PARTY_MS) return { vis: true, k: 1 };
+    if (ct < DROP_MS + PARTY_MS + SCOOP_MS) {
+      const st = ct - DROP_MS - PARTY_MS;
+      const k = 1 - Math.max(0, Math.min(1, (st - 300 - i * 200) / 700));
+      return { vis: k > 0, k };
+    }
+    return { vis: false, k: 0 };
+  }
+
+  function bagPos(now) {
+    const ct = now % CYCLE_MS;
+    const hoverY = H * 0.30;
+    const off = -BAG_H * scale - 24;
+    let y, open = false, vis = true;
+    if (ct < DROP_MS) {
+      const p = Math.min(1, ct / 500);
+      y = off + (hoverY - off) * p * (2 - p);
+      open = ct > 350;
+    } else if (ct < DROP_MS + 900) {
+      const p = (ct - DROP_MS) / 900;
+      y = hoverY + (off - hoverY) * p * p;
+    } else if (ct < DROP_MS + PARTY_MS) {
+      vis = false; y = off;
+    } else if (ct < DROP_MS + PARTY_MS + SCOOP_MS) {
+      const st = ct - DROP_MS - PARTY_MS;
+      const p = Math.min(1, st / 400);
+      y = off + (hoverY - off) * p * (2 - p);
+      open = st > 250;
+    } else {
+      const st = ct - DROP_MS - PARTY_MS - SCOOP_MS;
+      const p = Math.min(1, st / 800);
+      y = hoverY + (off - hoverY) * p * p;
+    }
+    return { x: W / 2, y, open, vis };
+  }
+
+  // Cat free-agent state: it abandons its spot to chase falling embers (and swat dragons)
+  let catX = null, catFacing = 1;
+  let dragonPos = null;   // {x, y} while the dragon is airborne
+
+  // Country line dance: the whole crew grapevines side to side in unison
+  const GRAPEVINE = [0, 1, 2, 1, 0, -1, -2, -1];
+
+  // Egg lifecycle: 'egg' -> 'cracking' -> 'baby' -> 'growing' -> 'dragon' (flies!) -> back to 'egg'
+  let eggStage = 'egg';
+  let hatchDoneAt = 0, stageUntil = 0, growStart = 0, dragonStart = 0;
+
+  let W, H, scale, dpr;
+  function resize() {
+    dpr = Math.min(devicePixelRatio || 1, 2);
+    W = innerWidth; H = innerHeight;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    // Minimum scale 3 on big screens, but allow 2 on phones so the whole
+    // conga line fits a 375px portrait viewport instead of overlapping.
+    const minScale = W < 480 ? 2 : 3;
+    scale = Math.max(minScale, Math.floor(Math.min(H / 46, W / 140)));
+  }
+  addEventListener('resize', () => { resize(); if (reduced) drawScene(0); });
+  addEventListener('orientationchange', () => setTimeout(() => { resize(); if (reduced) drawScene(0); }, 250));
+  resize();
+
+  // ---- Tilt parallax: the sky leans with your phone ----
+  let tiltX = 0, tiltReady = false;
+  function armTilt() {
+    if (tiltReady) return;
+    tiltReady = true;
+    const listen = () => addEventListener('deviceorientation', e => {
+      if (e.gamma == null) return;
+      const raw = Math.abs(window.orientation) === 90 ? (e.beta || 0) : e.gamma;
+      tiltX += (Math.max(-1, Math.min(1, raw / 40)) - tiltX) * 0.15;   // smoothed
+    });
+    if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) {
+      DeviceOrientationEvent.requestPermission().then(st => { if (st === 'granted') listen(); }).catch(() => {});
+    } else {
+      listen();
+    }
+  }
+
+  // ---- Kirby-style backdrop pieces ----
+  const CLOUDS = Array.from({ length: 5 }, () => ({
+    x: Math.random(),
+    y: 0.08 + Math.random() * 0.30,
+    s: 0.7 + Math.random() * 0.9,
+    v: 0.006 + Math.random() * 0.01,
+  }));
+  const STARS = Array.from({ length: 8 }, () => ({
+    x: Math.random(),
+    y: 0.05 + Math.random() * 0.35,
+    p: Math.random() * Math.PI * 2,
+  }));
+
+  // Two worlds: Kirby daytime, and 80s neon synthwave when the trance is on
+  const THEME_DAY = {
+    skyTop: '#8ed1ea', skyBot: '#d9f2f6', star: '#f2c14e',
+    cloud: '#ffffff', cloudShade: '#dceef5',
+    hillFar: '#a9de9b', hillNear: '#7ecb79',
+    tileA: '#58ad5c', tileB: '#4fa254', tileLit: '#b8e986',
+    disco: DISCO_COLORS, shadow: '20, 60, 30',
+  };
+  const THEME_NEON = {
+    skyTop: '#12082b', skyBot: '#4a1470', star: '#00e5ff',
+    cloud: '#2a1450', cloudShade: '#1c0d38',
+    hillFar: '#45207a', hillNear: '#7226a8',
+    tileA: '#1c1148', tileB: '#150c3a', tileLit: '#ff4fd8',
+    disco: ['#ff4fd8', '#00e5ff', '#b14fff', '#ffe14f'], shadow: '0, 0, 30',
+  };
+  // House: grungy sweaty 90s warehouse — smog, concrete, acid green
+  const THEME_GRUNGE = {
+    skyTop: '#241e1a', skyBot: '#4a3d33', star: '#b6ff2e',
+    cloud: '#3b332c', cloudShade: '#2b251f',
+    hillFar: '#3a332b', hillNear: '#2c2620',
+    tileA: '#4a443c', tileB: '#3e3830', tileLit: '#b6ff2e',
+    disco: ['#b6ff2e', '#ff9f1c', '#ffe14f', '#7de0c3'], shadow: '0, 0, 0',
+  };
+  // Trap: dusk over an urban basketball court
+  const THEME_COURT = {
+    skyTop: '#2b3a52', skyBot: '#7a5a6e', star: '#f2c14e',
+    cloud: '#3a4459', cloudShade: '#2c3547',
+    hillFar: '#232b38', hillNear: '#1a212c',
+    tileA: '#3a3f46', tileB: '#33373d', tileLit: '#ff9f1c',
+    disco: ['#ff9f1c', '#f2c14e', '#e0483a', '#ffffff'], shadow: '0, 0, 0',
+  };
+  // Country: high-noon desert
+  const THEME_DESERT = {
+    skyTop: '#ffca7a', skyBot: '#ffeecc', star: '#ffffff',
+    cloud: '#fff4e0', cloudShade: '#f0dcc0',
+    hillFar: '#e0c08a', hillNear: '#d0a86e',
+    tileA: '#d9b380', tileB: '#cfa670', tileLit: '#f2d9a8',
+    disco: ['#f2c14e', '#e8907a', '#d95763', '#fff4e0'], shadow: '80, 50, 20',
+  };
+  // 90s pop: chalkboard-and-gym-floor school
+  const THEME_SCHOOL = {
+    skyTop: '#37655a', skyBot: '#4a7a68', star: '#f2efe4',
+    cloud: '#e8e4d8', cloudShade: '#d0ccc0',
+    hillFar: '#b56a4a', hillNear: '#9a5538',
+    tileA: '#c9985a', tileB: '#ba8a4e', tileLit: '#f2c14e',
+    disco: ['#e0483a', '#f2c14e', '#5b8dd9', '#ffffff'], shadow: '40, 30, 10',
+  };
+  // Dusk over the meadow: warm horizon, first stars
+  const THEME_SUNSET = {
+    skyTop: '#5b6ba8', skyBot: '#f2a06e', star: '#fdf6ec',
+    cloud: '#f0c8b0', cloudShade: '#d8a890',
+    hillFar: '#7a9a70', hillNear: '#5a8258',
+    tileA: '#4a9450', tileB: '#428a48', tileLit: '#a8d97a',
+    disco: DISCO_COLORS, shadow: '30, 40, 40',
+  };
+  // Proper nighttime: deep blue, moonlit hills, fireflies-adjacent stars
+  const THEME_NIGHT = {
+    skyTop: '#101a3a', skyBot: '#28386a', star: '#f2e9c0',
+    cloud: '#2a3658', cloudShade: '#1e2946',
+    hillFar: '#26404a', hillNear: '#1c3038',
+    tileA: '#28584a', tileB: '#224e42', tileLit: '#7ac2a0',
+    disco: DISCO_COLORS, shadow: '0, 5, 20',
+  };
+  // The chip world follows YOUR clock (URL flag wins for shareable moods)
+  function chipTheme() {
+    const forced = URLP.get('theme');
+    if (forced === 'night') return THEME_NIGHT;
+    if (forced === 'sunset') return THEME_SUNSET;
+    if (forced === 'day') return THEME_DAY;
+    const h = new Date().getHours();
+    if (h >= 20 || h < 5) return THEME_NIGHT;
+    if (h >= 17 || h < 7) return THEME_SUNSET;
+    return THEME_DAY;
+  }
+  let T = THEME_DAY;
+
+  function drawCloud(cx, cy, s) {
+    ctx.fillStyle = T.cloud;
+    const r = 22 * s;
+    for (const [dx, dy, k] of [[-1.4, 0.15, 0.7], [-0.6, -0.3, 0.9], [0.3, -0.35, 1], [1.2, 0.05, 0.75]]) {
+      ctx.beginPath();
+      ctx.arc(cx + dx * r, cy + dy * r, r * k, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillRect(cx - 1.9 * r, cy, 3.6 * r, r * 0.75);
+    ctx.fillStyle = T.cloudShade;
+    ctx.fillRect(cx - 1.9 * r, cy + r * 0.45, 3.6 * r, r * 0.3);
+  }
+
+  function drawStar(cx, cy, r, alpha) {
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = T.star;
+    ctx.fillRect(cx - r / 2, cy - r * 1.5, r, r * 3);
+    ctx.fillRect(cx - r * 1.5, cy - r / 2, r * 3, r);
+    ctx.globalAlpha = 1;
+  }
+
+  function drawDiscoBall(now, active) {
+    const r = Math.max(14, scale * 3.2);
+    const cx = W * 0.09;
+    const cy = Math.max(96, H * 0.20);
+
+    // Colored beams sweep the scene while the wave rolls
+    if (active) {
+      const rot = now / 400;
+      const len = Math.max(W, H) * 1.4;
+      for (let i = 0; i < 8; i++) {
+        const a = rot + i * Math.PI / 4;
+        ctx.globalAlpha = 0.20;
+        ctx.fillStyle = T.disco[i % T.disco.length];
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(a) * len, cy + Math.sin(a) * len);
+        ctx.lineTo(cx + Math.cos(a + 0.14) * len, cy + Math.sin(a + 0.14) * len);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // Hanging cord
+    ctx.fillStyle = '#3a3540';
+    ctx.fillRect(cx - 1, 0, 3, cy - r);
+
+    // Mirrored facets, columns drifting to read as spin
+    const f = Math.max(3, Math.floor(scale * 0.7));
+    const spin = reduced ? 0 : (now / 90) % f;
+    for (let gy = -r; gy < r; gy += f) {
+      for (let gx = -r - f; gx < r; gx += f) {
+        const px = gx + spin, py = gy;
+        if (px * px + py * py > (r - 1) * (r - 1)) continue;
+        const idx = Math.abs(Math.floor(gx / f) * 3 + Math.floor(gy / f));
+        let col = ['#c7d0d8', '#aab4bd', '#dfe6ec'][idx % 3];
+        if (active && (idx * 7 + Math.floor(now / 110)) % 9 === 0) {
+          col = T.disco[(idx + Math.floor(now / 110)) % T.disco.length];
+        }
+        ctx.fillStyle = col;
+        ctx.fillRect(cx + px, cy + py, f - 1, f - 1);
+      }
+    }
+  }
+
+  function drawHoop(hx, floorY) {
+    const ph = H * 0.19;
+    ctx.fillStyle = '#4a4f57';
+    ctx.fillRect(hx - 2, floorY - ph, 5, ph);
+    ctx.fillStyle = '#e8e4d8';
+    ctx.fillRect(hx - scale * 2.2, floorY - ph - scale * 3, scale * 4.4, scale * 3);
+    ctx.fillStyle = '#ff9f1c';
+    ctx.fillRect(hx - scale * 1.6, floorY - ph - scale * 0.4, scale * 3.2, Math.max(2, scale * 0.35));
+  }
+
+  function drawHills(floorY) {
+    // Trap: proper high-rise skyline, hoops at BOTH ends of the court
+    if (mode === 'trap') {
+      for (let i = 0; i < 10; i++) {
+        const bw = W / 9;
+        const bh = H * (0.18 + ((i * 37) % 5) * 0.045);
+        const bx = i * bw - bw * 0.2;
+        ctx.fillStyle = i % 2 ? T.hillFar : T.hillNear;
+        ctx.fillRect(bx, floorY - bh, bw * 0.85, bh + 2);
+        ctx.fillStyle = '#f2c14e';
+        for (let wy = 0; wy < 8; wy++) {
+          for (let wx = 0; wx < 4; wx++) {
+            if ((i * 7 + wx * 3 + wy * 5) % 7 < 2) {
+              ctx.fillRect(bx + bw * 0.12 + wx * bw * 0.18, floorY - bh + 8 + wy * bh * 0.115, 3, 4);
+            }
+          }
+        }
+      }
+      drawHoop(W * 0.075, floorY);
+      drawHoop(W * 0.925, floorY);
+      return;
+    }
+    // Trance: buildings are drawn with the OutRun road (they stream toward the screen)
+    if (mode === 'trance' && !reduced) return;
+    // House: indoor rave — brick warehouse wall and pumping speaker stacks
+    if (mode === 'house') {
+      ctx.fillStyle = '#241e1a';
+      ctx.fillRect(0, 0, W, floorY);
+      ctx.fillStyle = '#2e2721';
+      const brH = scale * 1.6, brW = scale * 3.4;
+      for (let ry = 0, row = 0; ry < floorY; ry += brH, row++) {
+        ctx.fillRect(0, ry, W, 1.5);
+        for (let rx = (row % 2) * brW / 2; rx < W; rx += brW) {
+          ctx.fillRect(rx, ry, 1.5, brH);
+        }
+      }
+      const pump = 1 + 0.14 * (1 - (danceMs % BEAT_MS) / BEAT_MS);
+      [W * 0.055, W * 0.945].forEach(cx => {
+        const sw = scale * 7, sh = scale * 5;
+        for (let s = 0; s < 2; s++) {
+          const y = floorY - sh * (s + 1);
+          ctx.fillStyle = '#131110';
+          ctx.fillRect(cx - sw / 2, y, sw, sh - 2);
+          ctx.fillStyle = '#2a2a2a';
+          ctx.beginPath();
+          ctx.arc(cx, y + sh / 2 - 1, sh * 0.27 * pump, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#b6ff2e';
+          ctx.lineWidth = Math.max(1, scale * 0.12);
+          ctx.stroke();
+        }
+      });
+      return;
+    }
+    // Pop: school hallway lined with lockers
+    if (mode === 'pop') {
+      const lh = H * 0.20, lw = scale * 4.2;
+      for (let x = 0, idx = 0; x < W + lw; x += lw, idx++) {
+        ctx.fillStyle = idx % 2 ? '#4a76b8' : '#5b8dd9';
+        ctx.fillRect(x, floorY - lh, lw - 2, lh);
+        ctx.fillStyle = '#3a5f94';
+        ctx.fillRect(x + lw * 0.2, floorY - lh * 0.85, lw * 0.5, 3);
+        ctx.fillRect(x + lw * 0.2, floorY - lh * 0.72, lw * 0.5, 3);
+        ctx.fillStyle = '#f2c14e';
+        ctx.fillRect(x + lw * 0.68, floorY - lh * 0.45, 3, 5);
+      }
+      return;
+    }
+    ctx.fillStyle = T.hillFar;
+    const farR = H * 0.16;
+    for (let i = -1; i < 7; i++) {
+      ctx.beginPath();
+      ctx.arc(i * W / 4.5 + W * 0.1, floorY + farR * 0.55, farR, Math.PI, 0);
+      ctx.fill();
+    }
+    ctx.fillStyle = T.hillNear;
+    const nearR = H * 0.11;
+    for (let i = -1; i < 8; i++) {
+      ctx.beginPath();
+      ctx.arc(i * W / 3.2 + W * 0.28, floorY + nearR * 0.45, nearR, Math.PI, 0);
+      ctx.fill();
+    }
+    // Country plants saguaros on the dunes
+    if (mode === 'country') {
+      const cw = 8 * scale * 0.8, chh = 10 * scale * 0.8;
+      [0.12, 0.45, 0.72, 0.95].forEach((fx, ci) => {
+        ctx.drawImage(cactusSprite, W * fx - cw / 2, floorY - chh + scale * (ci % 2), cw, chh);
+      });
+    }
+  }
+
+  // Remix state: house double-times the dancing, trap half-times it
+  let mode = 'chip';
+  const danceRate = () => mode === 'house' ? 2 : mode === 'trap' ? 0.5 : 1;
+  let danceMs = 0, lastFrameNow = null;
+
+  // ---- Audio ----
+  let audioCtx = null;
+  function getAudio() {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+
+  function fireworkSound() {
+    const ac = getAudio();
+    const t0 = ac.currentTime;
+    const boomLen = 0.9;
+    const boomBuf = ac.createBuffer(1, ac.sampleRate * boomLen, ac.sampleRate);
+    const bd = boomBuf.getChannelData(0);
+    for (let i = 0; i < bd.length; i++) {
+      bd[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bd.length, 2.5);
+    }
+    const boom = ac.createBufferSource();
+    boom.buffer = boomBuf;
+    const lp = ac.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(900, t0);
+    lp.frequency.exponentialRampToValueAtTime(120, t0 + boomLen);
+    const bg = ac.createGain();
+    bg.gain.setValueAtTime(0.7, t0);
+    bg.gain.exponentialRampToValueAtTime(0.001, t0 + boomLen);
+    boom.connect(lp).connect(bg).connect(ac.destination);
+    boom.start(t0);
+    for (let i = 0; i < 14; i++) {
+      const t = t0 + 0.12 + Math.random() * 0.7;
+      const popLen = 0.02;
+      const pb = ac.createBuffer(1, ac.sampleRate * popLen, ac.sampleRate);
+      const pd = pb.getChannelData(0);
+      for (let j = 0; j < pd.length; j++) pd[j] = (Math.random() * 2 - 1) * (1 - j / pd.length);
+      const pop = ac.createBufferSource();
+      pop.buffer = pb;
+      const hp = ac.createBiquadFilter();
+      hp.type = 'highpass'; hp.frequency.value = 3000;
+      const pg = ac.createGain();
+      pg.gain.value = 0.10 + Math.random() * 0.12;
+      pop.connect(hp).connect(pg).connect(ac.destination);
+      pop.start(t);
+    }
+  }
+
+  function hatchSound() {
+    const ac = getAudio();
+    const t0 = ac.currentTime;
+    // A cheerful rising chirp for the hatchling
+    [523, 659, 784, 1047].forEach((f, i) => {
+      const t = t0 + i * 0.09;
+      const o = ac.createOscillator();
+      const g = ac.createGain();
+      o.type = 'square';
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.08, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+      o.connect(g).connect(ac.destination);
+      o.start(t); o.stop(t + 0.14);
+    });
+  }
+
+  function growSound() {
+    const ac = getAudio();
+    const t0 = ac.currentTime;
+    const dur = GROW_MS / 1000;
+    const o = ac.createOscillator();
+    const g = ac.createGain();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(110, t0);
+    o.frequency.exponentialRampToValueAtTime(520, t0 + dur);
+    g.gain.setValueAtTime(0.05, t0);
+    g.gain.linearRampToValueAtTime(0.11, t0 + dur);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur + 0.15);
+    o.connect(g).connect(ac.destination);
+    o.start(t0); o.stop(t0 + dur + 0.2);
+  }
+
+  function dragonSound() {
+    const ac = getAudio();
+    const t0 = ac.currentTime;
+    // Two quick swooping screeches as the dragon takes off
+    [0, 0.18].forEach(off => {
+      const o = ac.createOscillator();
+      const g = ac.createGain();
+      o.type = 'square';
+      o.frequency.setValueAtTime(880, t0 + off);
+      o.frequency.exponentialRampToValueAtTime(420, t0 + off + 0.16);
+      g.gain.setValueAtTime(0.08, t0 + off);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + off + 0.18);
+      o.connect(g).connect(ac.destination);
+      o.start(t0 + off); o.stop(t0 + off + 0.2);
+    });
+  }
+  // Bawk: two clipped square chirps, up then down — unmistakably poultry
+  let lastCluck = 0;
+  function cluckSound() {
+    const nowMs = performance.now();
+    if (nowMs - lastCluck < 350) return;   // one chicken, please
+    lastCluck = nowMs;
+    const ac = getAudio();
+    const t0 = ac.currentTime;
+    [[660, 880, 0], [880, 520, 0.09]].forEach(([f0, f1, off]) => {
+      const o = ac.createOscillator();
+      const g = ac.createGain();
+      o.type = 'square';
+      o.frequency.setValueAtTime(f0, t0 + off);
+      o.frequency.exponentialRampToValueAtTime(f1, t0 + off + 0.07);
+      g.gain.setValueAtTime(0.06, t0 + off);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + off + 0.08);
+      o.connect(g).connect(ac.destination);
+      o.start(t0 + off); o.stop(t0 + off + 0.1);
+    });
+  }
+
+  // ---- Haptics: kick-drum thumps in your hand (Android; silently skipped elsewhere) ----
+  const canBuzz = 'vibrate' in navigator;
+  function buzz(ms) { if (canBuzz && !reduced) { try { navigator.vibrate(ms); } catch (e) {} } }
+
+  // ---- Beat ----
+  let beatTimer = null, beatOn = false, step = 0;
+  const beatBtn = document.getElementById('beatBtn');
+  function kick(t) {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.frequency.setValueAtTime(150, t);
+    o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+    g.gain.setValueAtTime(0.5, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t); o.stop(t + 0.25);
+  }
+  function hat(t) {
+    const len = 0.05;
+    const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * len, audioCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    const hp = audioCtx.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = 7000;
+    const g = audioCtx.createGain();
+    g.gain.value = 0.15;
+    src.connect(hp).connect(g).connect(audioCtx.destination);
+    src.start(t);
+  }
+  function blip(t, freq) {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'square';
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0.06, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t); o.stop(t + 0.12);
+  }
+  // House kit
+  function openHat(t) {
+    const len = 0.16;
+    const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * len, audioCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 1.4);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    const hp = audioCtx.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = 6000;
+    const g = audioCtx.createGain();
+    g.gain.value = 0.12;
+    src.connect(hp).connect(g).connect(audioCtx.destination);
+    src.start(t);
+  }
+  function clap(t) {
+    [0, 0.02].forEach(off => {
+      const len = 0.09;
+      const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * len, audioCtx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2);
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      const bp = audioCtx.createBiquadFilter();
+      bp.type = 'bandpass'; bp.frequency.value = 1500; bp.Q.value = 1.2;
+      const g = audioCtx.createGain();
+      g.gain.value = 0.22;
+      src.connect(bp).connect(g).connect(audioCtx.destination);
+      src.start(t + off);
+    });
+  }
+  function bass(t, f) {
+    const o = audioCtx.createOscillator();
+    const lp = audioCtx.createBiquadFilter();
+    const g = audioCtx.createGain();
+    o.type = 'sawtooth';
+    o.frequency.value = f;
+    lp.type = 'lowpass'; lp.frequency.value = 480;
+    g.gain.setValueAtTime(0.16, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+    o.connect(lp).connect(g).connect(audioCtx.destination);
+    o.start(t); o.stop(t + 0.24);
+  }
+  function stab(t) {
+    [440, 523, 659].forEach(f => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'square';
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.035, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t); o.stop(t + 0.18);
+    });
+  }
+
+  // Hardcore kick: distorted, clicky, loud
+  const DIST_CURVE = new Float32Array(256);
+  for (let i = 0; i < 256; i++) DIST_CURVE[i] = Math.tanh((i / 128 - 1) * 3.5);
+  function hardKick(t) {
+    const o = audioCtx.createOscillator();
+    const ws = audioCtx.createWaveShaper();
+    const g = audioCtx.createGain();
+    ws.curve = DIST_CURVE;
+    o.frequency.setValueAtTime(170, t);
+    o.frequency.exponentialRampToValueAtTime(46, t + 0.10);
+    g.gain.setValueAtTime(0.85, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.30);
+    o.connect(ws).connect(g).connect(audioCtx.destination);
+    o.start(t); o.stop(t + 0.32);
+  }
+  // Trap 808: long sliding sub
+  function kick808(t, f) {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(f * 2.2, t);
+    o.frequency.exponentialRampToValueAtTime(f, t + 0.09);
+    g.gain.setValueAtTime(0.6, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t); o.stop(t + 0.65);
+  }
+  function trapSnare(t) {
+    clap(t);
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'triangle';
+    o.frequency.value = 185;
+    g.gain.setValueAtTime(0.2, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t); o.stop(t + 0.14);
+  }
+
+  // Trance voices: filtered pluck arp + slow detuned supersaw pad
+  function pluck(t, f) {
+    const o = audioCtx.createOscillator();
+    const lp = audioCtx.createBiquadFilter();
+    const g = audioCtx.createGain();
+    o.type = 'sawtooth'; o.frequency.value = f;
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(3200, t);
+    lp.frequency.exponentialRampToValueAtTime(700, t + 0.16);
+    g.gain.setValueAtTime(0.07, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    o.connect(lp).connect(g).connect(audioCtx.destination);
+    o.start(t); o.stop(t + 0.2);
+  }
+  function trancePad(t) {
+    [220, 277.2, 329.6].forEach(f => {
+      [-5, 5].forEach(det => {
+        const o = audioCtx.createOscillator();
+        const lp = audioCtx.createBiquadFilter();
+        const g = audioCtx.createGain();
+        o.type = 'sawtooth';
+        o.frequency.value = f * Math.pow(2, det / 1200);
+        lp.type = 'lowpass'; lp.frequency.value = 1800;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.linearRampToValueAtTime(0.026, t + 0.3);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 1.7);
+        o.connect(lp).connect(g).connect(audioCtx.destination);
+        o.start(t); o.stop(t + 1.8);
+      });
+    });
+  }
+
+  // Country voices: round upright-style bass and a twangy bent-note lead
+  function bassTri(t, f) {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'triangle';
+    o.frequency.value = f;
+    g.gain.setValueAtTime(0.22, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t); o.stop(t + 0.32);
+  }
+  function twang(t, f) {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'square';
+    o.frequency.setValueAtTime(f * 1.03, t);
+    o.frequency.exponentialRampToValueAtTime(f, t + 0.05);   // little bend into the note
+    g.gain.setValueAtTime(0.05, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t); o.stop(t + 0.26);
+  }
+
+  // Late-90s pop voices: bright piano stabs and the obligatory orchestra hit
+  function pianoStab(t, freqs) {
+    freqs.forEach(f => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'triangle';
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.07, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t); o.stop(t + 0.3);
+    });
+  }
+  function orchHit(t) {
+    [110, 220, 277.2, 329.6, 440].forEach(f => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'sawtooth';
+      o.frequency.value = f * 1.002;
+      g.gain.setValueAtTime(0.05, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t); o.stop(t + 0.32);
+    });
+  }
+
+  const MELODY = [392, 0, 523, 0, 587, 523, 0, 659, 392, 0, 523, 0, 784, 0, 659, 587];
+  const HOUSE_BASS = [98, 196, 98, 196, 110, 220, 130.8, 196];
+  const POP_BASS = [110, 0, 130.8, 110, 87.3, 0, 98, 110];
+  const POP_CHORDS = { 0: [220, 261.6, 329.6], 3: [174.6, 220, 261.6], 4: [196, 246.9, 293.7], 6: [164.8, 196, 246.9] };
+  const TRAP_808 = { 0: 55, 7: 65.4, 10: 49 };
+  const TRANCE_ARP = [220, 329.6, 440, 523.3, 440, 329.6, 261.6, 329.6];
+  const COUNTRY_BASS = [98, 0, 110, 0, 146.8, 0, 123.5, 0];
+  const COUNTRY_RIFF = [392, 0, 440, 494, 0, 392, 0, 330, 294, 0, 330, 392, 0, 440, 0, 494];
+  const TICK_S = BEAT_MS / 2000;   // one scheduler tick, in seconds
+  function scheduleBeat() {
+    const t = audioCtx.currentTime + 0.05;
+    if (step % 2 === 0) buzz(18);   // the kick, in your hand
+    if (mode === 'house') {
+      // Hardcore house: distorted four-on-the-floor, 16th hats, offbeat opens, relentless octave bass
+      if (step % 2 === 0) hardKick(t); else openHat(t);
+      hat(t); hat(t + TICK_S / 2);
+      if (step % 8 === 2 || step % 8 === 6) clap(t);
+      const b = HOUSE_BASS[step % HOUSE_BASS.length];
+      if (b) bass(t, b);
+      if (step % 8 === 4) stab(t);
+    } else if (mode === 'trap') {
+      // Trap: sliding 808s, half-time snare, hats with triplet rolls
+      const s16 = step % 16;
+      if (TRAP_808[s16] !== undefined) kick808(t, TRAP_808[s16]);
+      if (s16 === 8) trapSnare(t);
+      hat(t);
+      if (s16 === 3 || s16 === 11 || s16 === 14) { hat(t + TICK_S / 3); hat(t + TICK_S * 2 / 3); }
+    } else if (mode === 'trance') {
+      // Trance: kick on the beat, offbeat bass + open hat, 16th arp, supersaw pad each bar
+      if (step % 2 === 0) kick(t); else { bass(t, 110); openHat(t); }
+      hat(t);
+      pluck(t, TRANCE_ARP[(step * 2) % TRANCE_ARP.length]);
+      pluck(t + TICK_S / 2, TRANCE_ARP[(step * 2 + 1) % TRANCE_ARP.length]);
+      if (step % 16 === 0) trancePad(t);
+    } else if (mode === 'country') {
+      // Country: boom-chick, walking bass, twangy pentatonic riff
+      if (step % 4 === 0) kick(t);
+      if (step % 4 === 2) clap(t);
+      hat(t);
+      const b = COUNTRY_BASS[step % COUNTRY_BASS.length];
+      if (b) bassTri(t, b);
+      const n = COUNTRY_RIFF[step % COUNTRY_RIFF.length];
+      if (n) twang(t, n);
+    } else if (mode === 'pop') {
+      // Late-90s pop: punchy syncopated beat, slap bass, piano stabs, orchestra hit each bar
+      const s8 = step % 8;
+      if (s8 === 0 || s8 === 4 || s8 === 7) kick(t);
+      if (s8 === 2 || s8 === 6) clap(t);
+      hat(t);
+      const b = POP_BASS[s8];
+      if (b) bassTri(t, b);
+      const ch = POP_CHORDS[s8];
+      if (ch) pianoStab(t, ch);
+      if (step % 16 === 0) orchHit(t);
+    } else {
+      if (step % 2 === 0) kick(t);
+      hat(t);
+      const note = MELODY[step % MELODY.length];
+      if (note) blip(t, note);
+    }
+    step++;
+  }
+  beatBtn.addEventListener('click', () => {
+    beatOn = !beatOn;
+    beatBtn.setAttribute('aria-pressed', String(beatOn));
+    beatBtn.innerHTML = beatOn ? '&#9632; beat' : '&#9654; beat';
+    if (beatOn) {
+      getAudio();
+      step = 0;
+      scheduleBeat();
+      beatTimer = setInterval(scheduleBeat, BEAT_MS / 2);
+    } else {
+      clearInterval(beatTimer);
+      combo = 0;   // no beat, no judge
+    }
+    if (typeof refreshPrompt === 'function') refreshPrompt();
+  });
+  const houseBtn = document.getElementById('houseBtn');
+  const trapBtn = document.getElementById('trapBtn');
+  const tranceBtn = document.getElementById('tranceBtn');
+  const countryBtn = document.getElementById('countryBtn');
+  const popBtn = document.getElementById('popBtn');
+  function setMode(m) {
+    mode = mode === m ? 'chip' : m;
+    houseBtn.setAttribute('aria-pressed', String(mode === 'house'));
+    trapBtn.setAttribute('aria-pressed', String(mode === 'trap'));
+    tranceBtn.setAttribute('aria-pressed', String(mode === 'trance'));
+    countryBtn.setAttribute('aria-pressed', String(mode === 'country'));
+    popBtn.setAttribute('aria-pressed', String(mode === 'pop'));
+    if (mode !== 'chip' && !beatOn) beatBtn.click();   // remixing silence just starts the party
+    refreshPrompt();
+  }
+  houseBtn.addEventListener('click', () => setMode('house'));
+  trapBtn.addEventListener('click', () => setMode('trap'));
+  tranceBtn.addEventListener('click', () => setMode('trance'));
+  countryBtn.addEventListener('click', () => setMode('country'));
+  popBtn.addEventListener('click', () => setMode('pop'));
+
+  // ---- Shareable state: the URL and the fake CLI prompt both reflect reality ----
+  function buildShareURL() {
+    const p = new URLSearchParams();
+    if (DANCERS.length < ROSTER.length) p.set('with', DANCERS.map(d => d.name).join(','));
+    if (mode !== 'chip') p.set('remix', mode);
+    if (beatOn) p.set('beat', '');
+    if (URLP.get('hatch')) p.set('hatch', URLP.get('hatch'));
+    if (URLP.get('theme')) p.set('theme', URLP.get('theme'));
+    const q = p.toString().replace(/=(?=&|$)/g, '');
+    return location.href.split(/[?#]/)[0] + (q ? '?' + q : '');
+  }
+  const cmdEl = document.querySelector('.prompt .cmd');
+  function refreshPrompt() {
+    let cmd = 'claude --dance --with ' + DANCERS.map(d => d.name).join(',');
+    if (mode !== 'chip') cmd += ' --remix ' + mode;
+    if (beatOn) cmd += ' --beat';
+    if (URLP.get('hatch')) cmd += ' --hatch ' + URLP.get('hatch');
+    if (URLP.get('theme')) cmd += ' --theme ' + URLP.get('theme');
+    cmd += ' --disco';
+    cmdEl.textContent = cmd;
+    try { history.replaceState(null, '', buildShareURL()); } catch (e) {}   // file:// says no; fine
+  }
+
+  // A ?remix=... link should arrive mid-party, but browsers demand a gesture before
+  // audio — so dress the stage now, drop the needle on first touch.
+  const urlRemix = (URLP.get('remix') || '').toLowerCase();
+  let pendingBeat = URLP.has('beat') || ['house', 'trap', 'trance', 'country', 'pop'].includes(urlRemix);
+  if (['house', 'trap', 'trance', 'country', 'pop'].includes(urlRemix)) {
+    mode = urlRemix;
+    houseBtn.setAttribute('aria-pressed', String(mode === 'house'));
+    trapBtn.setAttribute('aria-pressed', String(mode === 'trap'));
+    tranceBtn.setAttribute('aria-pressed', String(mode === 'trance'));
+    countryBtn.setAttribute('aria-pressed', String(mode === 'country'));
+    popBtn.setAttribute('aria-pressed', String(mode === 'pop'));
+  }
+  function startPendingBeat() {
+    if (pendingBeat && !beatOn) beatBtn.click();
+    pendingBeat = false;
+  }
+
+  // ---- Share button: native sheet on mobile, clipboard elsewhere ----
+  const shareBtn = document.getElementById('shareBtn');
+  shareBtn.addEventListener('click', async () => {
+    const url = buildShareURL();
+    if (navigator.share) {
+      try { await navigator.share({ title: 'claude --dance', text: 'pixel dance party. tap for fireworks. watch the egg.', url }); return; } catch (e) { if (e.name === 'AbortError') return; }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      const t = shareBtn.textContent;
+      shareBtn.textContent = 'copied!';
+      setTimeout(() => { shareBtn.textContent = t; }, 1300);
+    } catch (e) { prompt('copy this link:', url); }
+  });
+
+  // ---- Postcard button: current frame + the prompt line, baked into a PNG ----
+  const snapBtn = document.getElementById('snapBtn');
+  snapBtn.addEventListener('click', () => {
+    drawScene(performance.now());   // make sure the pixels are fresh
+    const out = document.createElement('canvas');
+    out.width = canvas.width; out.height = canvas.height;
+    const ox = out.getContext('2d');
+    ox.drawImage(canvas, 0, 0);
+    ox.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const fs = Math.max(13, Math.round(Math.min(W, H) * 0.022));
+    ox.font = '600 ' + fs + 'px ui-monospace, Menlo, Consolas, monospace';
+    const text = '$ ' + cmdEl.textContent;
+    const pad = fs * 0.8;
+    const tw = ox.measureText(text).width;
+    ox.fillStyle = 'rgba(253, 246, 236, 0.82)';
+    ox.fillRect(pad, pad, tw + pad * 1.4, fs * 2);
+    ox.fillStyle = '#d97757';
+    ox.fillText('$', pad * 1.7, pad + fs * 1.35);
+    ox.fillStyle = '#2b4a58';
+    ox.fillText(text.slice(2), pad * 1.7 + ox.measureText('$ ').width, pad + fs * 1.35);
+    out.toBlob(async blob => {
+      if (!blob) return;
+      const file = new File([blob], 'claude-dance.png', { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: 'claude --dance' }); return; } catch (e) { if (e.name === 'AbortError') return; }
+      }
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'claude-dance.png';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    });
+  });
+
+  // ---- PWA: runtime-generated icon + inline manifest, so one file stays one file ----
+  try {
+    const ic = document.createElement('canvas');
+    ic.width = ic.height = 512;
+    const ix = ic.getContext('2d');
+    ix.fillStyle = '#8ed1ea';
+    ix.fillRect(0, 0, 512, 512);
+    ix.font = '340px serif';
+    ix.textAlign = 'center'; ix.textBaseline = 'middle';
+    ix.fillText('\u{1F57A}', 256, 286);
+    const iconURL = ic.toDataURL('image/png');
+    const manifest = {
+      name: 'claude --dance', short_name: 'dance',
+      start_url: '.', display: 'standalone',
+      background_color: '#8ed1ea', theme_color: '#8ed1ea',
+      icons: [{ src: iconURL, sizes: '512x512', type: 'image/png', purpose: 'any' }],
+    };
+    const mLink = document.createElement('link');
+    mLink.rel = 'manifest';
+    mLink.href = 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify(manifest));
+    document.head.appendChild(mLink);
+    const aLink = document.createElement('link');
+    aLink.rel = 'apple-touch-icon';
+    aLink.href = iconURL;
+    document.head.appendChild(aLink);
+  } catch (e) {}
+
+  refreshPrompt();
+
+  // ---- Confetti, steam, flips ----
+  const confetti = [];
+  let flipAt = -Infinity;
+  function burst(cx, cy, colors, count) {
+    colors = colors || CONFETTI_COLORS;
+    count = count || 60;
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 2 + Math.random() * 7;
+      confetti.push({
+        x: cx, y: cy,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp - 4,
+        size: 3 + Math.random() * 4,
+        color: colors[i % colors.length],
+        life: 90 + Math.random() * 60,
+      });
+    }
+  }
+  // ---- Rhythm game: taps are judged against the beat grid while the beat runs ----
+  let combo = 0, bestCombo = 0, comboFlashAt = -Infinity, comboJudge = '';
+  function scoreTap(now) {
+    if (!beatOn || reduced) return;
+    const phase = (danceMs % BEAT_MS) / BEAT_MS;   // 0 = right on the kick
+    const onBeat = phase < 0.20 || phase > 0.80;
+    if (onBeat) {
+      combo++;
+      bestCombo = Math.max(bestCombo, combo);
+      comboJudge = phase < 0.09 || phase > 0.91 ? 'perfect' : 'nice';
+      comboFlashAt = now;
+      // Every 8th on-beat tap: the whole crew leaps, confetti rains, the orchestra hits
+      if (combo % 8 === 0) {
+        for (let j = 0; j < DANCERS.length; j++) jumpV[j] = scale * (1.2 + Math.random() * 0.5);
+        for (let b = 0; b < 5; b++) burst(W * (0.1 + 0.2 * b), H * 0.12, CONFETTI_COLORS, 30);
+        orchHit(getAudio().currentTime);
+        buzz([30, 40, 30]);
+      }
+    } else if (combo > 1) {
+      comboJudge = 'miss';
+      comboFlashAt = now;
+      combo = 0;
+    } else {
+      combo = 0;
+    }
+  }
+
+  // ---- Drag-to-conduct: grab a dancer, reorder the line, fling them skyward ----
+  const jumpY = new Array(DANCERS.length).fill(0);   // current hop height, px
+  const jumpV = new Array(DANCERS.length).fill(0);   // upward velocity, px/frame
+  const dancerPos = new Array(DANCERS.length).fill(null);   // screen bboxes, updated each frame
+  let drag = null;
+
+  function doStageTap(cx, cy) {
+    const now = performance.now();
+    burst(cx, cy);
+    fireworkSound();
+    buzz(35);
+    scoreTap(now);
+    if (!reduced) {
+      flipAt = now;
+      if (eggStage === 'egg' && EGG_INDEX >= 0) {
+        // Crack while the wave travels; hatch lands right as the egg's flip finishes
+        eggStage = 'cracking';
+        hatchDoneAt = now + EGG_INDEX * FLIP_STAGGER + FLIP_MS;
+      }
+    } else {
+      if (eggStage === 'egg' && EGG_INDEX >= 0) {
+        eggStage = 'baby';
+        stageUntil = now + BABY_MS;
+        hatchSound();
+      }
+      drawScene(now);
+    }
+  }
+
+  canvas.addEventListener('pointerdown', e => {
+    armTilt();          // iOS wants a gesture before it hands over the gyroscope
+    startPendingBeat(); // URL asked for music: first touch is our autoplay permission
+    // Grab check: did the finger land on somebody?
+    let hit = -1, hitD = Infinity;
+    if (!reduced) {
+      for (let i = 0; i < DANCERS.length; i++) {
+        const p = dancerPos[i];
+        if (!p) continue;
+        const pad = scale * 2;
+        if (Math.abs(e.clientX - p.x) < p.w / 2 + pad && Math.abs(e.clientY - p.y) < p.h / 2 + pad) {
+          const dd = Math.abs(e.clientX - p.x);
+          if (dd < hitD) { hitD = dd; hit = i; }
+        }
+      }
+    }
+    if (hit >= 0) {
+      drag = { i: hit, id: e.pointerId, lastX: e.clientX, lastY: e.clientY, lastT: performance.now(), vx: 0, vy: 0, moved: false, startT: performance.now() };
+      try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    } else {
+      doStageTap(e.clientX, e.clientY);
+    }
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const t = performance.now();
+    const dt = Math.max(1, t - drag.lastT);
+    drag.vx = (e.clientX - drag.lastX) / dt;
+    drag.vy = (e.clientY - drag.lastY) / dt;
+    if (Math.abs(e.clientX - drag.lastX) + Math.abs(e.clientY - drag.lastY) > 4) drag.moved = true;
+    drag.lastX = e.clientX; drag.lastY = e.clientY; drag.lastT = t;
+    const d = DANCERS[drag.i];
+    d.xFrac = Math.max(0.04, Math.min(0.96, e.clientX / W));
+    if (d.isCat) catX = W * d.xFrac;   // the cat's AI resumes from wherever you put it
+  });
+  function endDrag(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const held = performance.now() - drag.startT;
+    if (!drag.moved && held < 300) {
+      doStageTap(e.clientX, e.clientY);   // that was just a tap on a dancer
+    } else if (drag.vy < -0.35) {
+      // Flung upward: convert flick speed into a proper hop
+      jumpV[drag.i] = Math.min(scale * 2.2, Math.max(scale * 0.9, -drag.vy * scale * 1.1));
+      buzz(20);
+    }
+    drag = null;
+  }
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', () => { drag = null; });
+
+  const steam = [];
+  let lastSteamStep = -1;
+  const trail = [];      // dragon sparkles + fire breath + embers
+  let lastFlameAt = 0;
+  let flameJet = null;   // active sustained fire-breath {ti, tx, ty, until}
+  let flash = null;      // impact flash {x, y, start, dur}
+
+
+  // ---- Render ----
+  function drawScene(now) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+
+    const beatIndex = Math.floor(danceMs / BEAT_MS);
+    const floorY = H * 0.72;
+    T = mode === 'trance' ? THEME_NEON
+      : mode === 'house' ? THEME_GRUNGE
+      : mode === 'trap' ? THEME_COURT
+      : mode === 'country' ? THEME_DESERT
+      : mode === 'pop' ? THEME_SCHOOL
+      : chipTheme();
+
+    // Egg lifecycle: cracking -> baby -> growing -> grown ??? -> egg again
+    const eggD = DANCERS[EGG_INDEX];
+    if (!eggD) { /* no egg in this lineup */ } else if (eggStage === 'cracking' && now >= hatchDoneAt) {
+      eggStage = 'baby';
+      stageUntil = now + BABY_MS;
+      burst(W * eggD.xFrac, floorY - eggD.h * scale * 0.5, SHELL_COLORS, 30);
+      hatchSound();
+    } else if (eggStage === 'baby' && now >= stageUntil) {
+      if (reduced) {
+        eggStage = 'egg';
+      } else {
+        eggStage = 'growing';
+        growStart = now;
+        // Roll the hatch table: pink dragon, disco chicken, or the rare golden dragon
+        hatchling = pickHatch(URLP.get('hatch'));
+        growSound();
+      }
+    } else if (eggStage === 'growing' && now >= growStart + GROW_MS) {
+      eggStage = 'dragon';
+      dragonStart = now;
+      stageUntil = now + DRAGON_MS;
+      if (hatchling.kind === 'chicken') cluckSound(); else dragonSound();
+      if (hatchling.kind === 'golden') burst(W * eggD.xFrac, floorY - 8 * scale, ['#f2c14e', '#f9e2a0', '#fdf6ec'], 50);
+    } else if (eggStage === 'dragon' && now >= stageUntil) {
+      eggStage = 'egg';
+      burst(W * eggD.xFrac, floorY - 8 * scale, ['#fdf6ec', '#ffffff', '#e08fb6'], 26);
+    }
+
+    // Sky
+    const sky = ctx.createLinearGradient(0, 0, 0, floorY);
+    sky.addColorStop(0, T.skyTop);
+    sky.addColorStop(1, T.skyBot);
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, floorY);
+
+    // Stars
+    for (const s of STARS) {
+      const tw = reduced ? 0.6 : 0.35 + 0.5 * (0.5 + 0.5 * Math.sin(now / 700 + s.p));
+      drawStar(s.x * W - tiltX * scale * 3, s.y * floorY, Math.max(2, scale * 0.28), tw);
+    }
+
+    // Clouds — but not indoors (the warehouse and the school hall have roofs)
+    if (mode !== 'house' && mode !== 'pop') {
+      for (const c of CLOUDS) {
+        const drift = reduced ? 0 : (now / 1000) * c.v;
+        const cw = 120 * c.s;
+        const cx = ((c.x + drift) % 1.2) * (W + cw * 2) - cw - tiltX * scale * 8 * c.s;
+        drawCloud(cx, c.y * floorY, c.s * Math.min(W, 900) / 900 + 0.3);
+      }
+    }
+
+    // Hills
+    drawHills(floorY);
+
+    // Floor — OutRun perspective grid in trance, pulsing checker everywhere else
+    const waveActive = !reduced && (now - flipAt) >= 0 && (now - flipAt) <= WAVE_MS + 300;
+    if (mode === 'trance' && !reduced) {
+      // Streaking synthwave grid: the crew is DRIVING now
+      const gh = H - floorY;
+      const grd = ctx.createLinearGradient(0, floorY, 0, H);
+      grd.addColorStop(0, '#140b30');
+      grd.addColorStop(1, '#241250');
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, floorY, W, gh);
+      // Rails converging on the vanishing point
+      ctx.strokeStyle = `rgba(0, 229, 255, ${waveActive ? 0.55 : 0.3})`;
+      ctx.lineWidth = Math.max(1, scale * 0.15);
+      const vx = W / 2;
+      for (let m = -10; m <= 10; m++) {
+        ctx.beginPath();
+        ctx.moveTo(vx + m * scale * 0.9, floorY);
+        ctx.lineTo(vx + m * W * 0.13, H);
+        ctx.stroke();
+      }
+      // Horizontals accelerating toward the screen — double time, foot to the floor
+      const zoff = (danceMs / BEAT_MS) % 1;
+      for (let k = 0; k < 12; k++) {
+        const z = ((k + zoff) / 12) % 1;
+        const y = floorY + gh * Math.pow(z, 2.2);
+        ctx.strokeStyle = `rgba(255, 79, 216, ${0.25 + z * (waveActive ? 0.75 : 0.55)})`;
+        ctx.lineWidth = Math.max(1, z * scale * 0.45);
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+        ctx.stroke();
+      }
+      // Neon towers flanking the road, streaming toward the screen and past the crew
+      const bzoff = (danceMs / (BEAT_MS * 4)) % 1;
+      const NB = 7;
+      for (let k = 0; k < NB; k++) {
+        const z = ((k / NB) + bzoff) % 1;
+        const s = Math.pow(z, 2.2);
+        const baseY = floorY + gh * s;
+        const hVar = 0.7 + (((k * 53) % 5) / 5) * 0.6;
+        const bh = (scale + H * 0.42 * s) * hVar;
+        const bw = W * 0.02 + W * 0.13 * s;
+        const xoff = scale * 2 + W * 0.40 * s;
+        ctx.globalAlpha = 0.25 + 0.75 * z;
+        [-1, 1].forEach(side => {
+          const bx = side === 1 ? W / 2 + xoff : W / 2 - xoff - bw;
+          ctx.fillStyle = '#1a0f38';
+          ctx.fillRect(bx, baseY - bh, bw, bh);
+          const glow = side === 1 ? '#ff4fd8' : '#00e5ff';
+          ctx.fillStyle = glow;
+          ctx.fillRect(bx, baseY - bh, bw, Math.max(2, s * scale * 0.5));
+          const edgeW = Math.max(2, s * scale * 0.35);
+          ctx.fillRect(side === 1 ? bx : bx + bw - edgeW, baseY - bh, edgeW, bh);
+        });
+        ctx.globalAlpha = 1;
+      }
+    } else {
+      const tile = scale * 2.4;
+      const cols = Math.ceil(W / tile) + 1;
+      const rows = Math.ceil((H - floorY) / tile) + 1;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const checker = (c + r) % 2 === 0;
+          const lit = !reduced && ((c + r + beatIndex) % 5 === 0);
+          ctx.fillStyle = lit
+            ? (waveActive ? T.disco[(c * 3 + r + beatIndex) % T.disco.length] : T.tileLit)
+            : (checker ? T.tileA : T.tileB);
+          ctx.fillRect(c * tile, floorY + r * tile, tile, tile);
+        }
+      }
+      // Court paint on the trap asphalt
+      if (mode === 'trap') {
+        ctx.strokeStyle = 'rgba(232, 228, 216, 0.55)';
+        ctx.lineWidth = Math.max(2, scale * 0.25);
+        ctx.beginPath();
+        ctx.ellipse(W / 2, floorY + (H - floorY) * 0.5, W * 0.16, (H - floorY) * 0.26, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, floorY + (H - floorY) * 0.5);
+        ctx.lineTo(W * 0.34, floorY + (H - floorY) * 0.5);
+        ctx.moveTo(W * 0.66, floorY + (H - floorY) * 0.5);
+        ctx.lineTo(W, floorY + (H - floorY) * 0.5);
+        ctx.stroke();
+      }
+    }
+
+    // Disco ball, top left
+    drawDiscoBall(now, waveActive);
+
+    // Show phase bookkeeping: the scoop resets whatever the egg was up to
+    const showPhaseT = now % CYCLE_MS;
+    const showPhase = reduced ? 'party'
+      : showPhaseT < DROP_MS ? 'drop'
+      : showPhaseT < DROP_MS + PARTY_MS ? 'party'
+      : showPhaseT < DROP_MS + PARTY_MS + SCOOP_MS ? 'scoop' : 'idle';
+    if (showPhase === 'scoop' && lastShowPhase !== 'scoop') {
+      eggStage = 'egg';
+      flameJet = null;
+    }
+    lastShowPhase = showPhase;
+
+    // The backpack, behind the dancers so they emerge in front of it
+    if (!reduced) {
+      const bag = bagPos(now);
+      if (bag.vis) {
+        ctx.save();
+        ctx.translate(bag.x, bag.y);
+        ctx.rotate(Math.sin(now / 350) * 0.06);
+        const bw = BAG_W * scale, bh = BAG_H * scale;
+        ctx.drawImage(bagFrames[bag.open ? 1 : 0], -bw / 2, -bh / 2, bw, bh);
+        ctx.restore();
+      }
+    }
+
+    // Dancers
+    for (let i = 0; i < DANCERS.length; i++) {
+      const d = DANCERS[i];
+      const show = showFor(i, now);
+      if (!show.vis) continue;   // tucked away in the backpack
+
+      // Country = line dancing: everyone on the SAME beat, no per-dancer phase
+      const lineDance = mode === 'country' && !reduced;
+      const beatT = danceMs / BEAT_MS + (lineDance ? 0 : d.phase);
+      const bounce = reduced ? 0 : Math.abs(Math.sin(beatT * Math.PI)) * scale * (lineDance ? 0.6 : 1.1);
+      let tilt = reduced ? 0 : Math.sin(beatT * Math.PI) * 0.06;
+      const halfStep = Math.floor(beatT * 2);
+      let frameIdx = reduced ? 0 : DANCE_CYCLE[halfStep % DANCE_CYCLE.length];
+      let x = W * d.xFrac;
+      let pounce = 0;
+
+      // Grapevine: step-step right, step-step left, all together now
+      if (lineDance) {
+        const gb = danceMs / BEAT_MS;
+        const gi = Math.floor(gb) % GRAPEVINE.length;
+        const gf = gb % 1;
+        const cur = GRAPEVINE[gi], nxt = GRAPEVINE[(gi + 1) % GRAPEVINE.length];
+        x += (cur + (nxt - cur) * Math.min(1, gf * 1.6)) * scale * 1.6;
+        tilt = Math.sin(gb * Math.PI * 2) * 0.05;
+      }
+
+      // The cat abandons choreography to chase falling embers
+      if (d.isCat) {
+        const home = W * d.xFrac;
+        if (catX === null) catX = home;
+        let target = home, chasing = false, huntingDragon = false, bestD = Infinity;
+        if (show.k === 1 && !reduced) {
+          // A flying dragon outranks embers on the prey list
+          if (dragonPos) {
+            target = dragonPos.x; chasing = true; huntingDragon = true;
+            bestD = Math.abs(dragonPos.x - catX);
+          } else {
+            for (const p of trail) {
+              if (p.kind !== 'ember') continue;
+              const dd = Math.abs(p.x - catX);
+              if (dd < bestD) { bestD = dd; target = p.x; chasing = true; }
+            }
+          }
+          target = Math.max(scale * 8, Math.min(W - scale * 8, target));
+        }
+        const dxm = target - catX;
+        const spd = (chasing ? 1.3 : 0.6) * scale;
+        catX += Math.abs(dxm) <= spd ? dxm : Math.sign(dxm) * spd;
+        if (Math.abs(dxm) > 3) catFacing = dxm < 0 ? 1 : -1;
+        x = catX;
+        if (chasing) {
+          frameIdx = Math.floor(now / 90) % 3;                    // scampering paws
+          if (huntingDragon && bestD < scale * 6) {
+            // Huge swatting leaps at the dragon overhead — never quite reaches
+            pounce = Math.abs(Math.sin(now / 260)) * scale * 7;
+          } else if (bestD < scale * 4) {
+            pounce = Math.abs(Math.sin(now / 90)) * scale * 1.3;  // batting at an ember
+          }
+        }
+      }
+
+      let frames = d.frames, dw = d.w, dh = d.h, sizeF = 1, shadowW = d.shadowW;
+      if (d.isEgg) {
+        if (eggStage === 'dragon') continue;   // airborne — drawn after the line-up
+        if (eggStage === 'growing') {
+          // swell from hatchling into whatever the dice said, wings testing the air
+          frames = hatchling.frames; dw = hatchling.w; dh = hatchling.h;
+          const gp = Math.min(1, (now - growStart) / GROW_MS);
+          sizeF = 0.4 + 0.6 * gp + Math.sin(gp * Math.PI * 6) * 0.04 * (1 - gp);
+          shadowW = 4.5 + 4 * gp;
+        } else {
+          frames = eggStates[eggStage];
+          // The egg wobbles harder than it bounces, and shivers while cracking
+          if (!reduced && eggStage !== 'baby') tilt = Math.sin(beatT * Math.PI * 2) * 0.14;
+          if (!reduced && eggStage === 'cracking') tilt += Math.sin(now / 28) * 0.05;
+        }
+      }
+
+      const flY = floorY;
+
+      // Mexican wave: each dancer launches its flip well after its neighbor
+      let hop = 0;
+      const fp = (now - flipAt - i * FLIP_STAGGER) / FLIP_MS;
+      if (fp >= 0 && fp <= 1) {
+        tilt -= Math.PI * 2 * (0.5 - 0.5 * Math.cos(Math.PI * fp));
+        hop = Math.sin(Math.PI * fp) * scale * 3;
+      }
+
+      // Steam puffs from the train's stack
+      if (d.steamCol !== undefined && !reduced && halfStep !== lastSteamStep) {
+        lastSteamStep = halfStep;
+        steam.push({
+          x: x + (d.steamCol - d.w / 2) * scale * sizeF,
+          y: flY - bounce - (d.h - 1) * scale * sizeF,
+          r: scale * 0.9 * sizeF,
+          vy: -0.8 - Math.random() * 0.5,
+          life: 70,
+        });
+      }
+
+      // Fling physics: a thrown dancer arcs up and parachutes back into step
+      if (!reduced && (jumpV[i] > 0 || jumpY[i] > 0)) {
+        jumpY[i] += jumpV[i];
+        jumpV[i] -= scale * 0.09;
+        if (jumpY[i] <= 0) { jumpY[i] = 0; jumpV[i] = 0; }
+      }
+
+      // Duck under incoming fire: flatten to the floor, hold the bounce
+      const ducking = now < duckUntil[i];
+      const duckF = ducking ? 0.55 : 1;
+      const lift = (ducking ? bounce * 0.15 : bounce + hop + pounce) + jumpY[i];
+      const squash = Math.max(0.4, 1 - lift / (scale * 5));
+
+      // In transit to/from the backpack: shrink and arc between bag mouth and floor spot
+      const ke = show.k * show.k * (3 - 2 * show.k);
+      const gs = show.k >= 1 ? 1 : 0.35 + 0.65 * ke;
+      const spriteW = dw * scale * sizeF * gs, spriteH = dh * scale * sizeF * duckF * gs;
+      let px = x, py = flY - lift + scale - spriteH / 2;
+      if (show.k < 1) {
+        const bag = bagPos(now);
+        const homeY = py;
+        px = bag.x + (x - bag.x) * ke;
+        py = bag.y + (homeY - bag.y) * ke - Math.sin(ke * Math.PI) * scale * 4;
+      }
+      dancerPos[i] = { x: px, y: py, w: spriteW, h: spriteH };   // for grab hit-testing
+
+      ctx.fillStyle = `rgba(${T.shadow}, ${0.25 * ke})`;
+      ctx.beginPath();
+      ctx.ellipse(x, flY + scale * 0.4, scale * shadowW * sizeF * squash, scale * 1.1 * squash, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(ducking ? 0 : tilt);
+      if (d.isCat) ctx.scale(catFacing, 1);
+      ctx.drawImage(frames[frameIdx], -spriteW / 2, -spriteH / 2, spriteW, spriteH);
+      if (lineDance) {
+        const hw = 10 * scale * 0.75, hh = 5 * scale * 0.75;
+        ctx.drawImage(hatSprite, d.hatX * scale * sizeF - hw / 2, -spriteH / 2 - hh + scale * 0.4, hw, hh);
+        // Cowboy boots over whatever passes for feet (yes, even wheels)
+        const bw = 4 * scale * 0.8, bh = 3 * scale * 0.8;
+        [-1, 1].forEach(side => {
+          ctx.drawImage(bootSprite, side * spriteW * 0.18 - bw / 2, spriteH / 2 - bh * 0.85, bw, bh);
+        });
+      }
+      if (mode === 'trap') {
+        const cw = 8 * scale * 0.7, ch = 5 * scale * 0.7;
+        const [nx, ny] = d.chainPos;
+        ctx.drawImage(chainSprite, nx * scale * sizeF - cw / 2, ny * scale * sizeF - ch * 0.2, cw, ch);
+      }
+      // 90s pop: cheer pom-poms, shaken on the beat
+      if (mode === 'pop' && !reduced) {
+        const shake = Math.sin(beatT * Math.PI * 2);
+        const POM = ['#e0483a', '#ffffff', '#f2c14e'];
+        [-1, 1].forEach(side => {
+          const pxp = side * spriteW * 0.55;
+          const pyp = -spriteH * 0.05 - Math.abs(shake) * scale * (side === 1 ? 1.2 : 0.8);
+          for (let b = 0; b < 6; b++) {
+            const ang = (b / 6) * Math.PI * 2 + shake * 0.5;
+            ctx.fillStyle = POM[b % 3];
+            ctx.beginPath();
+            ctx.arc(pxp + Math.cos(ang) * scale * 0.55, pyp + Math.sin(ang) * scale * 0.55, scale * 0.45, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        });
+      }
+      // Glow sticks in the warehouse: one per paw/claw/bumper, waving on the beat
+      if (mode === 'house' && !reduced) {
+        const GLOW = ['#b6ff2e', '#00e5ff', '#ff4fd8'];
+        const wave = Math.sin(beatT * Math.PI * 2);
+        [-1, 1].forEach((side, si) => {
+          const col = GLOW[(i + si) % GLOW.length];
+          ctx.save();
+          ctx.translate(side * spriteW * 0.55, -spriteH * 0.1);
+          ctx.rotate(side * (0.7 + wave * 0.7));
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.globalAlpha = 0.3;
+          ctx.fillStyle = col;
+          ctx.fillRect(-scale * 0.5, -scale * 2.3, scale, scale * 4.6);
+          ctx.globalAlpha = 1;
+          ctx.fillRect(-scale * 0.2, -scale * 2, scale * 0.4, scale * 4);
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.restore();
+        });
+      }
+      ctx.restore();
+
+      // Sweat flying off everyone in the 90s warehouse
+      if (mode === 'house' && !reduced && bounce > scale * 0.8 && Math.random() < 0.25) {
+        trail.push({
+          kind: 'sweat',
+          x: px + (Math.random() - 0.5) * spriteW * 0.8,
+          y: py - spriteH * 0.3,
+          vx: (Math.random() - 0.5) * 4, vy: -2 - Math.random() * 1.5,
+          size: 2 + Math.random() * 2, life: 26 + Math.random() * 12,
+          color: '#cfeaff',
+        });
+      }
+    }
+
+    // The hatchling, out for a joyride above the party
+    if (eggStage === 'dragon' && !reduced && eggD) {
+      const isChicken = hatchling.kind === 'chicken';
+      const HW = hatchling.w, HH = hatchling.h;
+      const t = Math.min(1, (now - dragonStart) / DRAGON_MS);
+      const eggX = W * eggD.xFrac;
+      const eggY = floorY - 6 * scale;
+      const curve = tt => ({
+        x: W * (0.5 + 0.36 * Math.sin(tt * Math.PI * 4 + 1.2)),
+        y: H * (0.26 + 0.13 * Math.sin(tt * Math.PI * 6)),
+      });
+      // Ease out of the egg spot at the start, glide back home at the end
+      const k = t < 0.12 ? t / 0.12 : t > 0.88 ? (1 - t) / 0.12 : 1;
+      const ke = k * k * (3 - 2 * k);
+      const c0 = curve(t), c1 = curve(t + 0.01);
+      const dx = eggX + (c0.x - eggX) * ke;
+      // Chickens are, famously, not great at this: frantic flapping, lurching altitude
+      const panic = isChicken ? Math.sin(now / 70) * scale * 1.2 + Math.sin(now / 310) * scale * 2.5 : 0;
+      const dy = eggY + (c0.y - eggY) * ke + panic * ke;
+      const sx = c1.x >= c0.x ? -1 : 1;   // sprite faces left; flip when heading right
+      const flap = FLAP_CYCLE[Math.floor(danceMs / (isChicken ? 60 : 110)) % FLAP_CYCLE.length];
+      const bob = Math.sin(danceMs / 180) * scale * 0.4;
+
+      // Sparkle trail off the tail (feathers for the chicken, gold dust for the golden)
+      if (Math.random() < 0.6) {
+        trail.push({
+          x: dx - sx * HW * scale * 0.35, y: dy + bob,
+          vx: (Math.random() - 0.5) * 0.6, vy: 0.3 + Math.random() * 0.4,
+          size: 2 + Math.random() * 3, life: 40 + Math.random() * 25,
+          color: (isChicken ? ['#fdf6ec', '#ffffff', '#f2a33c']
+            : hatchling.kind === 'golden' ? ['#f2c14e', '#f9e2a0', '#fdf6ec', '#ffffff']
+            : ['#f2c9dc', '#e08fb6', '#f2c14e', '#fdf6ec'])[Math.floor(Math.random() * 4)],
+        });
+      }
+      // Disco chicken payload: it lays mid-air. The eggs are a hazard. The cat is thrilled.
+      if (isChicken && Math.random() < 0.025 && trail.length < 400) {
+        trail.push({
+          kind: 'eggdrop',
+          x: dx, y: dy + bob + HH * scale * 0.3,
+          vx: (Math.random() - 0.5) * 1.2, vy: 0.5,
+          size: Math.max(3, scale * 1.1), life: 400,
+          color: '#fdf6ec',
+        });
+        if (Math.random() < 0.4) cluckSound();
+      }
+      // Fire breath: pick a dancer on the facing side and hose them down for ~700ms
+      if (!isChicken && !flameJet && now - lastFlameAt > 2400 && t > 0.1 && t < 0.85) {
+        lastFlameAt = now;
+        const candidates = [], everyone = [];
+        for (let j = 0; j < DANCERS.length; j++) {
+          if (DANCERS[j].isEgg) continue;   // can't flame yourself
+          everyone.push(j);
+          const tx = W * DANCERS[j].xFrac;
+          if (sx === 1 ? tx < dx : tx > dx) candidates.push(j);
+        }
+        const pool = candidates.length ? candidates : everyone;
+        if (pool.length) {
+          const ti = pool[Math.floor(Math.random() * pool.length)];
+          flameJet = { ti, tx: W * DANCERS[ti].xFrac, ty: floorY - 2 * scale, until: now + 700 };
+          duckUntil[ti] = now + 1700;   // they see it coming and hit the deck
+        }
+      }
+      // Sustained cone of flame from the mouth while the jet is live
+      if (flameJet && now <= flameJet.until) {
+        const mouthX = dx - sx * HW * scale * 0.5;
+        const mouthY = dy + bob - scale * 2;
+        const dist = Math.hypot(flameJet.tx - mouthX, flameJet.ty - mouthY) || 1;
+        const steps = 26;
+        const baseAng = Math.atan2(flameJet.ty - mouthY, flameJet.tx - mouthX);
+        for (let i = 0; i < 9; i++) {
+          const ang = baseAng + (Math.random() - 0.5) * 0.28;
+          const sp = (dist / steps) * (0.65 + Math.random() * 0.7);
+          const life = steps * (0.8 + Math.random() * 0.5);
+          trail.push({
+            kind: 'fire',
+            x: mouthX + (Math.random() - 0.5) * scale, y: mouthY + (Math.random() - 0.5) * scale,
+            vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+            size: scale * (0.7 + Math.random() * 0.8),
+            life, total: life,
+          });
+        }
+      }
+
+      // Faint shadow far below on the grass
+      ctx.fillStyle = `rgba(${T.shadow}, 0.15)`;
+      ctx.beginPath();
+      ctx.ellipse(dx, floorY + scale * 0.4, scale * HW * 0.21, scale * 0.8, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.save();
+      ctx.translate(dx, dy + bob);
+      ctx.scale(sx, 1);
+      ctx.rotate(Math.sin(now / 300) * 0.05);
+      ctx.drawImage(hatchling.frames[flap], -HW * scale / 2, -HH * scale / 2, HW * scale, HH * scale);
+      ctx.restore();
+      dragonPos = { x: dx, y: dy + bob };
+    } else {
+      dragonPos = null;
+    }
+
+    // Jet finished (or dragon left) — impact: flash ring + ember splash where it landed
+    if (flameJet && now > flameJet.until) {
+      flash = { x: flameJet.tx, y: flameJet.ty, start: now, dur: 450 };
+      for (let i = 0; i < 18; i++) {
+        trail.push({
+          kind: 'ember',
+          x: flameJet.tx + (Math.random() - 0.5) * scale * 4, y: flameJet.ty,
+          vx: (Math.random() - 0.5) * 3.5, vy: -1 - Math.random() * 2.5,
+          size: 2 + Math.random() * 3, life: 35 + Math.random() * 25,
+          color: ['#f2c14e', '#e8907a', '#9a8478'][i % 3],
+        });
+      }
+      flameJet = null;
+    }
+
+    // Dragon trail, fire, and embers
+    for (let i = trail.length - 1; i >= 0; i--) {
+      const p = trail[i];
+      p.x += p.vx; p.y += p.vy;
+      if (p.kind === 'ember' || p.kind === 'sweat') p.vy += 0.1;
+      if (p.kind === 'eggdrop') {
+        p.vy += 0.22;
+        if (p.y >= H * 0.72) {   // splat
+          burst(p.x, H * 0.72, ['#fdf6ec', '#ffffff', '#f2c14e'], 8);
+          trail.splice(i, 1); continue;
+        }
+      }
+      p.life--;
+      if (p.life <= 0) { trail.splice(i, 1); continue; }
+      if (p.kind === 'fire') {
+        // Additive glow, white-hot at birth cooling to deep red, swelling as it flies
+        const f = p.life / p.total;
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = Math.min(1, f + 0.25);
+        ctx.fillStyle = f > 0.72 ? '#fff8dc' : f > 0.5 ? '#ffd24e' : f > 0.3 ? '#ff8c4a' : '#e0483a';
+        const s = p.size * (1.6 - f);
+        ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
+        ctx.globalCompositeOperation = 'source-over';
+      } else {
+        ctx.globalAlpha = Math.min(1, p.life / 25);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, p.size, p.size);
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    // Impact flash — expanding hot ring that fades
+    if (flash) {
+      const fp = (now - flash.start) / flash.dur;
+      if (fp >= 1) flash = null;
+      else {
+        const r = scale * 2 + fp * scale * 9;
+        ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createRadialGradient(flash.x, flash.y, 0, flash.x, flash.y, r);
+        g.addColorStop(0, `rgba(255, 244, 200, ${0.55 * (1 - fp)})`);
+        g.addColorStop(0.6, `rgba(255, 140, 74, ${0.35 * (1 - fp)})`);
+        g.addColorStop(1, 'rgba(224, 72, 58, 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(flash.x, flash.y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+      }
+    }
+
+    // Steam
+    for (let i = steam.length - 1; i >= 0; i--) {
+      const p = steam[i];
+      p.y += p.vy;
+      p.x += 0.25;
+      p.r += 0.14;
+      p.life--;
+      if (p.life <= 0) { steam.splice(i, 1); continue; }
+      ctx.globalAlpha = Math.min(0.85, p.life / 50);
+      ctx.fillStyle = '#fdf6ec';
+      ctx.fillRect(p.x - p.r, p.y - p.r, p.r * 2, p.r * 2);
+      ctx.globalAlpha = 1;
+    }
+
+    // Confetti
+    for (let i = confetti.length - 1; i >= 0; i--) {
+      const p = confetti[i];
+      p.x += p.vx + tiltX * 1.4; p.y += p.vy;
+      p.vy += 0.18;
+      p.life--;
+      if (p.life <= 0 || p.y > H + 20) { confetti.splice(i, 1); continue; }
+      ctx.globalAlpha = Math.min(1, p.life / 40);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x, p.y, p.size, p.size);
+    }
+    ctx.globalAlpha = 1;
+
+    // Rhythm judge: combo counter top-right, popping on each hit
+    if (beatOn && !reduced && (combo >= 2 || now - comboFlashAt < 700)) {
+      const sinceFlash = now - comboFlashAt;
+      const pop = Math.max(0, 1 - sinceFlash / 220);
+      const fs = Math.max(15, Math.round(Math.min(W, H) * 0.035)) * (1 + pop * 0.35);
+      ctx.save();
+      ctx.textAlign = 'right'; ctx.textBaseline = 'top';
+      ctx.font = '700 ' + fs + 'px ui-monospace, Menlo, Consolas, monospace';
+      const hx = W - Math.max(16, W * 0.03), hy = Math.max(52, H * 0.09);
+      if (combo >= 2) {
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        ctx.fillText(combo + 'x combo', hx + 2, hy + 2);
+        ctx.fillStyle = combo >= 8 ? '#f2c14e' : '#fdf6ec';
+        ctx.fillText(combo + 'x combo', hx, hy);
+      }
+      if (sinceFlash < 700 && comboJudge) {
+        ctx.globalAlpha = 1 - sinceFlash / 700;
+        ctx.font = '600 ' + Math.round(fs * 0.6) + 'px ui-monospace, Menlo, Consolas, monospace';
+        ctx.fillStyle = comboJudge === 'miss' ? '#d95763' : comboJudge === 'perfect' ? '#f2c14e' : '#fdf6ec';
+        ctx.fillText(comboJudge, hx, hy + fs * 1.15);
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+    }
+  }
+
+  if (reduced) {
+    drawScene(0);
+    setInterval(() => { if (confetti.length) drawScene(performance.now()); }, 40);
+  } else {
+    const loop = now => {
+      // The dance clock runs double-speed in house mode, half-speed in trap
+      if (lastFrameNow !== null) danceMs += Math.min(100, now - lastFrameNow) * danceRate();
+      lastFrameNow = now;
+      drawScene(now);
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  }
+})();
+</script>
+</body>
+</html>
